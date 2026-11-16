@@ -22,6 +22,10 @@ spring:
 server:
   port: 8080
 
+# 로그인 토큰(JWT). secret은 application-local.yml 에 적어요 (Git에 안 올라감)
+jwt:
+  expiration-ms: 604800000      # 7일: 프론트 로그인 유지 기간(D-75)과 같게
+
 # MQTT (ingest 패키지에서 사용 예정)
 mqtt:
   broker-url: tcp://localhost:1883

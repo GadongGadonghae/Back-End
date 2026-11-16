@@ -4,5 +4,8 @@ spring:
   datasource:
     password: 여기에_내_sfaas_app_비밀번호
 
+jwt:
+  secret: 여기에_Base64로_인코딩한_32바이트_이상_비밀키   # 예: openssl rand -base64 32
+
 mqtt:
   client-id: sfaas-be-내이름
