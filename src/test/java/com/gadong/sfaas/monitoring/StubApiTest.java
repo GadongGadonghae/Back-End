@@ -41,7 +41,16 @@ class StubApiTest {
     void m02LineSummaryUsesUppercaseKeys() throws Exception {
         mvc.perform(get("/api/v1/monitoring/lines/summary"))
                 .andExpect(jsonPath("$[0].R").value(5))
+                .andExpect(jsonPath("$[0].DC").value(0))
                 .andExpect(jsonPath("$[0].worstStatus").value("I"));
+    }
+
+    @Test
+    void m10ThresholdsAreDistinguishedByEquipment() throws Exception {
+        mvc.perform(get("/api/v1/alarms/thresholds").param("equipmentId", "C-WD"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].equipmentId").value("C-WD"))
+                .andExpect(jsonPath("$[0].process").value("WELDING"));
     }
 
     @Test

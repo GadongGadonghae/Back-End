@@ -50,10 +50,11 @@ public class AlarmController {
         return service.ack(alarmId, request);
     }
 
-    @Operation(summary = "M-10 알람 기준치 조회", description = "P1. threshold 테이블")
+    @Operation(summary = "M-10 알람 기준치 조회", description = "P1. threshold 테이블. 기준치는 설비별이라 응답의 equipmentId 로 구분해요.")
     @GetMapping("/thresholds")
-    public List<ThresholdResponse> thresholds(@RequestParam(required = false) String process) {
-        return service.thresholds(process);
+    public List<ThresholdResponse> thresholds(@RequestParam(required = false) String process,
+                                              @RequestParam(required = false) String equipmentId) {
+        return service.thresholds(process, equipmentId);
     }
 
     @Operation(summary = "M-11 알람 기준치 수정", description = "P1")

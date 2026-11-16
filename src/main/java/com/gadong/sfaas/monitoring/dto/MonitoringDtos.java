@@ -12,7 +12,7 @@ public final class MonitoringDtos {
 
     /** M-01 · M-12 · W-01 공통 설비 상태 필드 */
     public record EquipmentStatusResponse(String equipmentId, String lineId, String process,
-                                          @Schema(description = "R 가동 / S 정지(계획) / I 대기 / D 고장·알람") String status,
+                                          @Schema(description = "R 가동 / S 정지(계획) / I 대기 / D 고장·알람 / DC 통신 끊김. 겹치면 D > DC > S > I > R") String status,
                                           OffsetDateTime since,
                                           @Schema(description = "R 이면 null") String reasonCode,
                                           Map<String, Object> lastValues) {}
@@ -21,6 +21,7 @@ public final class MonitoringDtos {
     public record LineSummaryResponse(String lineId,
                                       @JsonProperty("R") int r, @JsonProperty("S") int s,
                                       @JsonProperty("I") int i, @JsonProperty("D") int d,
+                                      @JsonProperty("DC") int dc,
                                       String worstStatus) {}
 
     /** M-03 */
@@ -37,8 +38,8 @@ public final class MonitoringDtos {
 
     public record AckResponse(long alarmId, OffsetDateTime ackedAt) {}
 
-    /** M-10 */
-    public record ThresholdResponse(long id, String process, String metric, Double low, Double high) {}
+    /** M-10. 기준치는 설비별이라 equipmentId 로 행을 구분해요 */
+    public record ThresholdResponse(long id, String equipmentId, String process, String metric, Double low, Double high) {}
 
     /** M-11 */
     public record ThresholdUpdateRequest(Double low, Double high) {}
