@@ -1,3 +1,4 @@
+
 # 테스트 전용 설정: PostgreSQL 없이 메모리 DB(H2)로 실행해요.
 spring:
   datasource:
@@ -7,5 +8,10 @@ spring:
     driver-class-name: org.h2.Driver
   jpa:
     hibernate:
-      ddl-auto: create-drop     # 테스트용 메모리 DB에만 적용돼요
+      ddl-auto: create-drop
     open-in-view: false
+
+# 테스트 전용 JWT 설정
+jwt:
+  secret: ${JWT_TEST_SECRET:VGhpcy1pcy1hLXRlc3Qtb25seS1qd3Qtc2lnbmluZy1rZXktMzItYnl0ZXMh}
+  expiration-ms: 3600000

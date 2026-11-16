@@ -1,3 +1,4 @@
+
 package com.gadong.sfaas.master;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -9,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest
 @AutoConfigureMockMvc
 @Transactional
+@WithMockUser(username = "testuser", roles = "MANAGER")
 class MasterApiTest {
 
     @Autowired MockMvc mvc;
@@ -36,31 +39,31 @@ class MasterApiTest {
     void lines() throws Exception {
         seed();
         mvc.perform(get("/api/v1/lines"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].lineId").value("A"))
-                .andExpect(jsonPath("$[0].defaultPaintId").value("PT1"));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0].lineId").value("A"))
+            .andExpect(jsonPath("$[0].defaultPaintId").value("PT1"));
     }
 
     @Test
     void equipmentsFilteredAndSorted() throws Exception {
         seed();
         mvc.perform(get("/api/v1/equipments").param("lineId", "A").param("process", "PRESS"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
-                .andExpect(jsonPath("$[0].dataSource").value("OPCUA"));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
+            .andExpect(jsonPath("$[0].dataSource").value("OPCUA"));
         mvc.perform(get("/api/v1/equipments"))
-                .andExpect(jsonPath("$.length()").value(3)); // 비활성 B-PR1 제외
+            .andExpect(jsonPath("$.length()").value(3)); // 비활성 B-PR1 제외
     }
 
     @Test
     void unknownLineGivesErrorBody() throws Exception {
         seed();
         mvc.perform(get("/api/v1/equipments").param("lineId", "Z"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.code").value("LINE_NOT_FOUND"))
-                .andExpect(jsonPath("$.timestamp").exists());
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.status").value(404))
+            .andExpect(jsonPath("$.code").value("LINE_NOT_FOUND"))
+            .andExpect(jsonPath("$.timestamp").exists());
     }
 }
