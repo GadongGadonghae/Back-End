@@ -65,6 +65,19 @@ class StubApiTest {
     }
 
     @Test
+    void u09ActionUserIsSentAsIdAndReturnedWithName() throws Exception {
+        mvc.perform(patch("/api/v1/downtime/events/1").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reasonCode\":\"UP_BREAKDOWN\",\"memo\":\"점검\",\"actionUserId\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actionUserId").value(7))
+                .andExpect(jsonPath("$.actionUserName").value("홍길동"));
+        mvc.perform(get("/api/v1/downtime/events").param("from", "2026-11-17").param("to", "2026-11-18")
+                        .param("actionUserId", "7"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].actionUserId").value(7));
+    }
+
+    @Test
     void r03Approve() throws Exception {
         mvc.perform(patch("/api/v1/reassignments/1/approve").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"approvedBy\":\"admin\"}"))

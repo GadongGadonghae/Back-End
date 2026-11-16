@@ -65,15 +65,16 @@ public class AvailabilityService {
     /** U-08: 1분 이상 정지만 비가동 1건으로 세요(minMinutes=1) */
     public PageResponse<DowntimeEventResponse> downtimeEvents(LocalDate from, LocalDate to, String lineId, String process,
                                                               String status, String reasonCode, Boolean inProgress,
-                                                              String actionBy, String equipmentId, int minMinutes,
+                                                              Long actionUserId, String equipmentId, int minMinutes,
                                                               int page, int size) {
         return PageResponse.of(List.of(new DowntimeEventResponse(1, "A", "A-PR1", "PRESS", "D", "UP_BREAKDOWN",
-                T0.minusMinutes(40), T0, 40, false, "홍길동", "금형 교체")));
+                T0.minusMinutes(40), T0, 40, false, 7L, "홍길동", "금형 교체")));
     }
 
     /** U-09: 자동 판정된 사유 중 틀린 것만 사람이 수정해요 */
     public DowntimeEventUpdateResponse updateDowntimeEvent(long eventId, DowntimeEventUpdateRequest request) {
-        return new DowntimeEventUpdateResponse(eventId, request.reasonCode(), request.actionBy());
+        return new DowntimeEventUpdateResponse(eventId, request.reasonCode(), request.actionUserId(),
+                request.actionUserId() == null ? null : "홍길동");
     }
 
     /** U-10 */
