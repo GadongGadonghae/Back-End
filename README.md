@@ -4,6 +4,15 @@
 
 Node-RED가 MQTT로 보내는 설비 원시 값을 받아 **저장 · 판정(RSID 상태, 알람, 비가동 사유) · 집계**하고, 화면(Vue)에 REST와 WebSocket(STOMP)으로 제공해요.
 
+## 📚 문서
+
+| 문서 | 내용 |
+|---|---|
+| [API 명세서 v2](https://claude.ai/artifact/TFF4RzC1MZqwoATAQZYVmx) | REST API 41개, MQTT 토픽, WebSocket(STOMP) 채널, 공통 규칙. **개발 기준 문서** |
+| Swagger UI | 서버 실행 후 http://localhost:8080/swagger-ui/index.html (코드에서 자동 생성) |
+
+> API 주소·요청·응답 형식은 API 명세서 v2를 먼저 보고 구현해요. 명세와 다르게 만들어야 하면 명세서를 먼저 고쳐요.
+
 ## 🧰 기술
 
 | 구분 | 사용 |
@@ -61,7 +70,7 @@ gradlew.bat test
 - 시간대는 **Asia/Seoul** 고정이에요.
 - Controller와 MQTT 수신부에는 판정 로직을 넣지 않고 Service를 불러요. 판정 규칙은 `judge`에만 둬요.
 - Entity를 그대로 응답하지 않고 DTO로 바꿔 내보내요.
-- API 주소·응답 형식, MQTT 토픽, WebSocket 경로는 **API 명세서 v2**가 기준이에요. Base URL은 `/api/v1`.
+- API 주소·응답 형식, MQTT 토픽, WebSocket 경로는 **[API 명세서 v2](https://claude.ai/artifact/TFF4RzC1MZqwoATAQZYVmx)**가 기준이에요. Base URL은 `/api/v1`.
 
 ## 🌿 브랜치
 
