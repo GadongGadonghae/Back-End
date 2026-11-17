@@ -1,4 +1,4 @@
-# SFaaS API 명세서 v3
+# SFaaS API 명세서 v3.1
 
 > 기준본: API 명세서 v3 아티팩트(주소는 v2 때와 같음)(https://claude.ai/artifact/TFF4RzC1MZqwoATAQZYVmx, 2026-11-17 팀 결정 반영)를 Markdown으로 옮긴 파일입니다. Notion v0.2는 더 이상 기준이 아닙니다. 명세에 없는 내용은 추가하거나 추측하지 않았고, 적혀 있지 않은 항목(자료형, 필수 여부, 엔드포인트별 오류 코드, 엔드포인트별 인증 여부)은 "명세에 없음"으로 표시했습니다.
 
@@ -23,6 +23,7 @@
 | 💓 [v3] DC 판정 기준 | 값이 10초 이상 안 들어오면 DC | 설비가 1초마다 상태 신호(heartbeat, Q-04)를 보내고, 그 신호가 10초 이상 끊기면 DC, fault=true면 고장(D). 사이클 값이 없어도 신호가 오면 DC가 아님 |
 | ⏸️ [v3] S-01 응답 | 설비 6줄 | stopId 1건으로 묶어 응답(equipmentIds 포함) |
 | 🧹 [v3] 브로커·정제·저장 | Node-RED가 정제 후 DB에 바로 저장 | 설비 → MQTT 브로커(앞단) → Node-RED(정제 6가지 후 PostgreSQL에 바로 INSERT) → Spring Boot(DB의 새 값을 읽어 판정, 결과를 DB에 갱신하고 WebSocket으로 푸시). 가상 설비·PLC는 OPC UA 없이 MQTT로 바로 전송 |
+| 🔗 [v3.1] Base URL | `/api/v1` | `/api` (주소에 버전을 붙이지 않음, 11/17 결정) |
 
 **❓ 아직 미정:** 노사협의(`UP_LABOR`) RFP 원문 확인 · 슬리팅 관리값 기준(데이터 확정 후) · 알람 등급(WARNING/CRITICAL) 기준 · users.role 종류 · 토픽 이름·페이로드(sfaas/hb는 제안, IoT 담당과 확인).
 
