@@ -1,6 +1,7 @@
 package com.gadong.sfaas.ingest.entity;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -11,9 +12,9 @@ public class PressData {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) @Column(name = "id") private Long id;
     @Column(name = "equipment_id") private String equipmentId;
     @Column(name = "measured_at") private LocalDateTime measuredAt;
-    @Column(name = "pressure_left") private Double pressureLeft;
-    @Column(name = "pressure_right") private Double pressureRight;
-    @Column(name = "press_time") private Double pressTime;
-    @Column(name = "pressure_total") private Double pressureTotal;
+    @Column(name = "pressure_left") private BigDecimal pressureLeft;
+    @Column(name = "pressure_right") private BigDecimal pressureRight;
+    @Column(name = "press_time") private BigDecimal pressTime;
+    @Column(name = "pressure_total") private BigDecimal pressureTotal;
     @Column(name = "result") private String result;
 }
