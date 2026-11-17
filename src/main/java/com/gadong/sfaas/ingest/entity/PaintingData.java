@@ -11,6 +11,8 @@ import lombok.NoArgsConstructor;
 public class PaintingData {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) @Column(name = "id") private Long id;
     @Column(name = "equipment_id") private String equipmentId;
+    /** 제품 번호. Node-RED가 넣어요 (값이 없을 수 있음) */
+    @Column(name = "product_id", length = 30) private String productId;
     @Column(name = "measured_at") private LocalDateTime measuredAt;
     @Column(name = "line_id") private String lineId;
     @Column(name = "ph") private BigDecimal ph;
