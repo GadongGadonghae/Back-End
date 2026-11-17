@@ -37,7 +37,7 @@ class AvailabilityApiTest {
                         + "('A-PR1','프레스A-1','PRESS','A',1,true), ('B-PR1','프레스B-1','PRESS','B',1,true), ('PT1','도장-1','PAINTING',null,1,true)",
                 "insert into downtime_code(code, code_name, is_planned) values "
                         + "('UP_BREAKDOWN','장비고장',false), ('UP_ALARM','알람',false), ('UP_DELAY','작업지연',false), ('PL_PM','예방보전',true)",
-                "insert into users(user_id, user_name) values (1,'김정비'), (2,'홍길동'), (3,'홍길동')",
+                "insert into users(user_id, login_id, password_hash, user_name, role) values (1,'u1','x','김정비','OPERATOR'), (2,'u2','x','홍길동','OPERATOR'), (3,'u3','x','홍길동','OPERATOR')",
                 // 1: 40분 고장(조치 완료) / 2: 30초 고장(1분 미만) / 3: 계획정지 / 4: 공용 도장 알람 20분 / 5: 23:50부터 진행 중
                 "insert into downtime_event(downtime_id, equipment_id, status, code, started_at, ended_at, action_memo, action_user_id) values "
                         + "(1,'A-PR1','D','UP_BREAKDOWN','2026-11-10 09:00:00','2026-11-10 09:40:00','금형 점검',1), "

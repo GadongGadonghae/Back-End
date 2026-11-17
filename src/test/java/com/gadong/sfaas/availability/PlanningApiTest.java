@@ -34,7 +34,7 @@ class PlanningApiTest {
                 "insert into line(line_id, line_name) values ('A','A라인'), ('B','B라인')",
                 "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values ('A-PR1','프레스A-1','PRESS','A',1,true)",
                 "insert into downtime_code(code, code_name, is_planned) values ('UP_BREAKDOWN','장비고장',false)",
-                "insert into users(user_id, user_name) values (1,'김관리')",
+                "insert into users(user_id, login_id, password_hash, user_name, role) values (1,'u1','x','김관리','ADMIN')",
                 "insert into downtime_event(downtime_id, equipment_id, status, code, started_at, ended_at) values "
                         + "(10,'A-PR1','D','UP_BREAKDOWN','2026-11-10 09:00:00','2026-11-10 09:42:00')",
                 "insert into reassignment_report(report_id, downtime_id, loss_qty, created_at, approved) values (12,10,126,'2026-11-10 09:55:00',false)",

@@ -1,31 +1,25 @@
 package com.gadong.sfaas.availability.service;
 
-import java.util.List;
-import java.util.Map;
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import com.gadong.sfaas.auth.entity.User;
+import com.gadong.sfaas.auth.repository.UserRepository;
 import org.springframework.stereotype.Component;
 
-/**
- * users 테이블 조회. users는 auth 패키지(BE2) 소유라 엔티티가 없어서 읽기만 해요.
- * TODO(BE2 연동): auth의 User 엔티티·Repository가 생기면 이 클래스를 지우고 그쪽을 써요.
- */
+/** 조치 담당자·승인자 번호 확인과 이름 조회. users는 auth(BE2) 소유라 읽기만 해요 */
 @Component
 class UserLookup {
 
-    private final NamedParameterJdbcTemplate jdbc;
+    private final UserRepository users;
 
-    UserLookup(NamedParameterJdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    UserLookup(UserRepository users) {
+        this.users = users;
     }
 
     boolean exists(int userId) {
-        return jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE user_id = :id", Map.of("id", userId), Long.class) > 0;
+        return users.existsById(userId);
     }
 
     /** 사용자가 없거나 userId가 null이면 null */
     String name(Integer userId) {
-        if (userId == null) return null;
-        List<String> names = jdbc.queryForList("SELECT user_name FROM users WHERE user_id = :id", Map.of("id", userId), String.class);
-        return names.isEmpty() ? null : names.get(0);
+        return userId == null ? null : users.findById(userId).map(User::getUserName).orElse(null);
     }
 }
