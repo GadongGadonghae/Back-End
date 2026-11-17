@@ -2,6 +2,7 @@ package com.gadong.sfaas.monitoring.controller;
 
 import com.gadong.sfaas.monitoring.dto.MonitoringDtos.*;
 import com.gadong.sfaas.monitoring.service.MonitoringService;
+import com.gadong.sfaas.monitoring.service.TodayStats;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
@@ -19,9 +20,21 @@ import org.springframework.web.bind.annotation.RestController;
 public class MonitoringController {
 
     private final MonitoringService service;
+    private final TodayStats todayStats;
 
-    public MonitoringController(MonitoringService service) {
+    public MonitoringController(MonitoringService service, TodayStats todayStats) {
         this.service = service;
+        this.todayStats = todayStats;
+    }
+
+    @Operation(summary = "M-15 설비별 사이클 수·평균 CT (공정 상세)",
+            description = "그날 설비별 처리 행 수와 평균 CT(ms). date 생략 시 오늘. 프레스는 단(PR1~PR4)마다 자기 칸이 채워진 행 수이고, "
+                    + "단별 시각이 없어 CT는 라인의 제품 간격이에요(네 단이 같음)")
+    @GetMapping("/monitoring/processes/{process}/cycles")
+    public List<CycleResponse> cycles(@PathVariable String process,
+                                      @RequestParam(required = false) String lineId,
+                                      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return todayStats.cycles(process, lineId, date);
     }
 
     @Operation(summary = "M-01 전체 설비 현재 상태 (흐름도용)", description = "P1. 39건. 설비 상태 공통 필드는 M-12·W-01과 같아요.")

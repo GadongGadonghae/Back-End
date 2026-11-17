@@ -72,4 +72,12 @@ public final class MonitoringDtos {
     /** E-01. productId는 Node-RED가 안 넣었으면 null */
     public record EquipmentDataResponse(OffsetDateTime ts, String equipmentId, String productId, String process, String result,
                                         Map<String, Object> values) {}
+
+    /** M-14 시간대별 출고 양품. target·planCumulative는 그날 계획(G-03)이 없으면 null */
+    public record HourlyResponse(java.time.LocalDate date, String lineId, Integer target, List<Hour> hours) {
+        public record Hour(int hour, long done, long cumulative, Long planCumulative) {}
+    }
+
+    /** M-15 설비별 사이클 수·평균 CT(ms). 행이 1개 이하면 avgCtMs는 null */
+    public record CycleResponse(String equipmentId, long cycles, Long avgCtMs) {}
 }
