@@ -286,10 +286,10 @@ public class MonitoringService {
             total += jdbc.queryForObject("SELECT COUNT(*)" + where, p, Long.class);
             p.addValue("limit", need);
             String cols = t.columns().stream().map(c -> "d." + c).collect(Collectors.joining(", "));
-            for (Map<String, Object> row : jdbc.queryForList("SELECT d.equipment_id, d.measured_at, d.result, " + cols + where
+            for (Map<String, Object> row : jdbc.queryForList("SELECT d.equipment_id, d.product_id, d.measured_at, d.result, " + cols + where
                     + " ORDER BY d.measured_at DESC, d.id DESC LIMIT :limit", p)) {
                 merged.add(new EquipmentDataResponse(Kst.of(Kst.local(row.get("measured_at"))), (String) row.get("equipment_id"),
-                        t.process(), (String) row.get("result"), ProcessData.values(row, t)));
+                        (String) row.get("product_id"), t.process(), (String) row.get("result"), ProcessData.values(row, t)));
             }
         }
         merged.sort(Comparator.comparing(EquipmentDataResponse::ts).reversed());

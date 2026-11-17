@@ -12,9 +12,12 @@ final class ProcessData {
 
     static final List<Table> TABLES = List.of(
             new Table("SLITTING", "slitting_data", List.of("torque", "current", "voltage")),
-            new Table("PRESS", "press_data", List.of("pressure_left", "pressure_right", "press_time", "pressure_total")),
+            new Table("PRESS", "press_data", List.of("pressure_left", "pressure_right", "pressure_diff", "press_time", "pressure_total")),
             new Table("WELDING", "welding_data", List.of("press_force", "current", "voltage", "weld_time")),
             new Table("PAINTING", "painting_data", List.of("ph", "temperature", "current", "voltage")));
+
+    /** 프레스 1행 = 제품 1개. PR1→PR4가 차례로 자기 칸 하나씩 채워요 (판정 설계 v2 1-1). 행의 equipment_id는 마지막에 쓴 단으로 바뀌어요 */
+    static final List<String> PRESS_STAGES = List.of("pressure_left", "pressure_right", "pressure_diff", "press_time");
 
     private ProcessData() {}
 
