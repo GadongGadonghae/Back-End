@@ -39,8 +39,8 @@ public class AlarmController {
     public PageResponse<AlarmHistoryResponse> alarms(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                               @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                               @RequestParam(required = false) String equipmentId,
-                                              @RequestParam(defaultValue = "0") int page,
-                                              @RequestParam(defaultValue = "20") int size) {
+                                              @RequestParam(defaultValue = "1") int page,
+                                              @RequestParam(defaultValue = "50") int size) {
         return service.alarms(from, to, equipmentId, page, size);
     }
 

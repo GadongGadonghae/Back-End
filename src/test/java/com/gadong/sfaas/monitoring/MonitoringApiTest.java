@@ -127,13 +127,13 @@ class MonitoringApiTest {
                 .andExpect(jsonPath("$[0].upperLimit").value(285.3))
                 .andExpect(jsonPath("$[0].clearedAt").isEmpty())
                 .andExpect(jsonPath("$[0].occurredAt").value("2026-11-10T09:10:00+09:00"));
-        mvc.perform(get("/api/alarms").param("from", DAY).param("to", DAY).param("page", "1").param("size", "1"))
-                .andExpect(jsonPath("$.totalElements").value(2))
-                .andExpect(jsonPath("$.content[0].alarmId").value(381))
-                .andExpect(jsonPath("$.content[0].ackedAt").isEmpty());
+        mvc.perform(get("/api/alarms").param("from", DAY).param("to", DAY).param("page", "2").param("size", "1"))
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.items[0].alarmId").value(381))
+                .andExpect(jsonPath("$.items[0].ackedAt").isEmpty());
         mvc.perform(get("/api/alarms").param("from", DAY).param("to", DAY).param("equipmentId", "B-PR1"))
-                .andExpect(jsonPath("$.content[0].itemName").isEmpty()) // 고장 신호 알람은 항목이 없어요
-                .andExpect(jsonPath("$.content[0].clearedAt").value("2026-11-10T09:18:00+09:00"));
+                .andExpect(jsonPath("$.items[0].itemName").isEmpty()) // 고장 신호 알람은 항목이 없어요
+                .andExpect(jsonPath("$.items[0].clearedAt").value("2026-11-10T09:18:00+09:00"));
         mvc.perform(patch("/api/alarms/381/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ackUserId").value(1))
@@ -152,12 +152,12 @@ class MonitoringApiTest {
     @Test
     void m08InspectionsFilterAndPage() throws Exception {
         mvc.perform(get("/api/inspections").param("from", DAY).param("to", DAY))
-                .andExpect(jsonPath("$.totalElements").value(2))
-                .andExpect(jsonPath("$.content[0].inspectionId").value(9002))
-                .andExpect(jsonPath("$.content[0].productId").value("P-2"));
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.items[0].inspectionId").value(9002))
+                .andExpect(jsonPath("$.items[0].productId").value("P-2"));
         mvc.perform(get("/api/inspections").param("from", DAY).param("to", DAY).param("lineId", "B").param("result", "NG"))
-                .andExpect(jsonPath("$.content.length()").value(1))
-                .andExpect(jsonPath("$.content[0].paintId").value("PT1"));
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].paintId").value("PT1"));
         mvc.perform(get("/api/inspections").param("from", DAY).param("to", DAY).param("result", "RECHECK"))
                 .andExpect(status().isBadRequest());
         mvc.perform(get("/api/inspections").param("from", "2026-11-11").param("to", DAY))
@@ -220,13 +220,13 @@ class MonitoringApiTest {
     @Test
     void e01EquipmentDataPagesAcrossTables() throws Exception {
         mvc.perform(get("/api/equipment-data").param("from", DAY).param("to", DAY).param("size", "2"))
-                .andExpect(jsonPath("$.totalElements").value(3))
-                .andExpect(jsonPath("$.content.length()").value(2))
-                .andExpect(jsonPath("$.content[0].process").value("PRESS"))
-                .andExpect(jsonPath("$.content[0].values.pressureLeft").value(280.0));
-        mvc.perform(get("/api/equipment-data").param("from", DAY).param("to", DAY).param("size", "2").param("page", "1"))
-                .andExpect(jsonPath("$.content.length()").value(1));
+                .andExpect(jsonPath("$.total").value(3))
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[0].process").value("PRESS"))
+                .andExpect(jsonPath("$.items[0].values.pressureLeft").value(280.0));
+        mvc.perform(get("/api/equipment-data").param("from", DAY).param("to", DAY).param("size", "2").param("page", "2"))
+                .andExpect(jsonPath("$.items.length()").value(1));
         mvc.perform(get("/api/equipment-data").param("from", DAY).param("to", DAY).param("result", "NG"))
-                .andExpect(jsonPath("$.totalElements").value(1));
+                .andExpect(jsonPath("$.total").value(1));
     }
 }

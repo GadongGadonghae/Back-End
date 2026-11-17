@@ -159,7 +159,7 @@ public class MonitoringService {
                         toDouble(rs.getBigDecimal("lower_limit")), toDouble(rs.getBigDecimal("upper_limit")),
                         Kst.of(rs.getObject("raised_at", LocalDateTime.class)), Kst.of(rs.getObject("cleared_at", LocalDateTime.class)),
                         Kst.of(rs.getObject("acked_at", LocalDateTime.class))));
-        return new PageResponse<>(content, total);
+        return new PageResponse<>(content, total, page, size);
     }
 
     /** M-06. 이미 확인한 알람은 처음 확인한 사람·시각을 돌려줘요 */
@@ -224,7 +224,7 @@ public class MonitoringService {
                 (rs, n) -> new InspectionResponse(rs.getLong("inspection_id"), rs.getString("product_id"), rs.getString("line_id"),
                         rs.getString("paint_equipment_id"), rs.getString("result"),
                         Kst.of(rs.getObject("inspected_at", LocalDateTime.class))));
-        return new PageResponse<>(content, total);
+        return new PageResponse<>(content, total, page, size);
     }
 
     /** M-09 */
@@ -273,7 +273,7 @@ public class MonitoringService {
             tables = tables.stream().filter(t -> t.process().equals(eqProcess)).toList();
         }
 
-        long need = (long) (page + 1) * size;
+        long need = (long) page * size;
         long total = 0;
         List<EquipmentDataResponse> merged = new ArrayList<>();
         for (ProcessData.Table t : tables) {
@@ -293,9 +293,9 @@ public class MonitoringService {
             }
         }
         merged.sort(Comparator.comparing(EquipmentDataResponse::ts).reversed());
-        int fromIndex = (int) Math.min((long) page * size, merged.size());
+        int fromIndex = (int) Math.min((long) (page - 1) * size, merged.size());
         int toIndex = (int) Math.min(need, merged.size());
-        return new PageResponse<>(new ArrayList<>(merged.subList(fromIndex, toIndex)), total);
+        return new PageResponse<>(new ArrayList<>(merged.subList(fromIndex, toIndex)), total, page, size);
     }
 
     /** M-01·M-12 공통: 열린 상태 구간(ended_at IS NULL) + 그 구간의 비가동 사유(downtime_id) + 마지막 측정값 */

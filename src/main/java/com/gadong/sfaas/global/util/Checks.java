@@ -15,7 +15,7 @@ public final class Checks {
     }
 
     public static void page(int page, int size) {
-        if (page < 0 || size < 1 || size > MAX_SIZE) throw invalid("page는 0 이상, size는 1~" + MAX_SIZE + "이어야 합니다");
+        if (page < 1 || size < 1 || size > MAX_SIZE) throw invalid("page는 1 이상, size는 1~" + MAX_SIZE + "이어야 합니다");
     }
 
     public static void result(String result) {

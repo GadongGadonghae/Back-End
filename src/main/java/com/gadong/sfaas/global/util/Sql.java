@@ -12,9 +12,9 @@ public final class Sql {
         return new MapSqlParameterSource().addValue("from", Kst.start(from)).addValue("to", Kst.endExclusive(to));
     }
 
-    /** :limit, :offset 페이지 파라미터 */
+    /** :limit, :offset 페이지 파라미터. page는 1부터 */
     public static MapSqlParameterSource paging(MapSqlParameterSource p, int page, int size) {
-        return p.addValue("limit", size).addValue("offset", (long) page * size);
+        return p.addValue("limit", size).addValue("offset", (long) (page - 1) * size);
     }
 
     /** 값이 있을 때만 {@code AND column = :name} 조건을 붙여요. column에는 코드에 적힌 컬럼명만 넘겨요 */

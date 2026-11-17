@@ -44,8 +44,8 @@ public class ProductionController {
                                                         @RequestParam(required = false) String lineId,
                                                         @RequestParam(required = false) String paintId,
                                                         @RequestParam(required = false) String result,
-                                                        @RequestParam(defaultValue = "0") int page,
-                                                        @RequestParam(defaultValue = "20") int size) {
+                                                        @RequestParam(defaultValue = "1") int page,
+                                                        @RequestParam(defaultValue = "50") int size) {
         return service.inspections(from, to, lineId, paintId, result, page, size);
     }
 
@@ -72,8 +72,8 @@ public class ProductionController {
             @RequestParam(required = false) String process,
             @RequestParam(required = false) String equipmentId,
             @RequestParam(required = false) String result,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int size) {
         return service.equipmentData(from, to, lineId, process, equipmentId, result, page, size);
     }
 }

@@ -70,8 +70,9 @@ public class AvailabilityController {
     public List<ByEquipmentResponse> byEquipment(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                  @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
                                                  @RequestParam(required = false) String process,
-                                                 @RequestParam(defaultValue = "10") int limit) {
-        return utilization.byEquipment(from, to, process, limit);
+                                                 @RequestParam(required = false) String lineId,
+                                                 @RequestParam(required = false) Integer limit) {
+        return utilization.byEquipment(from, to, process, lineId, limit);
     }
 
     @Operation(summary = "U-06 요일별 가동률 + 비가동 건수", description = "P2")
@@ -104,8 +105,8 @@ public class AvailabilityController {
             @RequestParam(required = false) Integer actionUserId,
             @RequestParam(required = false) String equipmentId,
             @RequestParam(defaultValue = "1") int minMinutes,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int size) {
         return service.downtimeEvents(from, to, lineId, process, status, reasonCode, inProgress, actionUserId,
                 equipmentId, minMinutes, page, size);
     }
