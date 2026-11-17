@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "생산 계획 · 재배정 · 계획정지")
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api")
 public class PlanningController {
 
     private static final String DATE = "yyyy-MM-dd";

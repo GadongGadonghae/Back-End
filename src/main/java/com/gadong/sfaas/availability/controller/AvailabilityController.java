@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "가동률")
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api")
 public class AvailabilityController {
 
     private static final String DATE = "yyyy-MM-dd";

@@ -61,7 +61,7 @@ class MonitoringApiTest {
 
     @Test
     void m01StatusJoinsOpenSegmentReasonAndLastValues() throws Exception {
-        mvc.perform(get("/api/v1/monitoring/status").param("lineId", "A"))
+        mvc.perform(get("/api/monitoring/status").param("lineId", "A"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(3))
                 .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
@@ -72,17 +72,17 @@ class MonitoringApiTest {
                 .andExpect(jsonPath("$[1].status").value("I"))
                 .andExpect(jsonPath("$[1].reasonCode").isEmpty())
                 .andExpect(jsonPath("$[2].status").value("DC"));
-        mvc.perform(get("/api/v1/monitoring/status"))
+        mvc.perform(get("/api/monitoring/status"))
                 .andExpect(jsonPath("$.length()").value(8))
                 .andExpect(jsonPath("$[7].lineId").isEmpty()); // 공용 설비는 뒤에
-        mvc.perform(get("/api/v1/monitoring/status").param("lineId", "Z"))
+        mvc.perform(get("/api/monitoring/status").param("lineId", "Z"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("LINE_NOT_FOUND"));
     }
 
     @Test
     void m02CountsRsidPerLine() throws Exception {
-        mvc.perform(get("/api/v1/monitoring/lines/summary"))
+        mvc.perform(get("/api/monitoring/lines/summary"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].lineId").value("A"))
                 .andExpect(jsonPath("$[0].D").value(1))
@@ -96,29 +96,29 @@ class MonitoringApiTest {
 
     @Test
     void m03RawAndFiveSecondAverage() throws Exception {
-        mvc.perform(get("/api/v1/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY).param("metric", "pressureLeft"))
+        mvc.perform(get("/api/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY).param("metric", "pressureLeft"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.metrics.length()").value(1))
                 .andExpect(jsonPath("$.metrics[0].unit").value("bar"))
                 .andExpect(jsonPath("$.metrics[0].limitHigh").value(285.3))
                 .andExpect(jsonPath("$.metrics[0].points.length()").value(3))
                 .andExpect(jsonPath("$.metrics[0].points[1].result").value("NG"));
-        mvc.perform(get("/api/v1/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY)
+        mvc.perform(get("/api/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY)
                         .param("metric", "pressureLeft").param("interval", "5s"))
                 .andExpect(jsonPath("$.metrics[0].points.length()").value(2))
                 .andExpect(jsonPath("$.metrics[0].points[0].ts").value("2026-11-10T09:00:00+09:00"))
                 .andExpect(jsonPath("$.metrics[0].points[0].value").value(281.0))
                 .andExpect(jsonPath("$.metrics[0].points[0].result").value("NG"));
-        mvc.perform(get("/api/v1/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY).param("interval", "1m"))
+        mvc.perform(get("/api/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY).param("interval", "1m"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(get("/api/v1/equipments/X-PR9/metrics").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/equipments/X-PR9/metrics").param("from", DAY).param("to", DAY))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("EQUIPMENT_NOT_FOUND"));
     }
 
     @Test
     void m04m05m06Alarms() throws Exception {
-        mvc.perform(get("/api/v1/alarms/active").param("lineId", "A"))
+        mvc.perform(get("/api/alarms/active").param("lineId", "A"))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].alarmId").value(381))
                 .andExpect(jsonPath("$[0].itemName").value("pressureLeft"))
@@ -127,46 +127,46 @@ class MonitoringApiTest {
                 .andExpect(jsonPath("$[0].upperLimit").value(285.3))
                 .andExpect(jsonPath("$[0].clearedAt").isEmpty())
                 .andExpect(jsonPath("$[0].occurredAt").value("2026-11-10T09:10:00+09:00"));
-        mvc.perform(get("/api/v1/alarms").param("from", DAY).param("to", DAY).param("page", "1").param("size", "1"))
+        mvc.perform(get("/api/alarms").param("from", DAY).param("to", DAY).param("page", "1").param("size", "1"))
                 .andExpect(jsonPath("$.totalElements").value(2))
                 .andExpect(jsonPath("$.content[0].alarmId").value(381))
                 .andExpect(jsonPath("$.content[0].ackedAt").isEmpty());
-        mvc.perform(get("/api/v1/alarms").param("from", DAY).param("to", DAY).param("equipmentId", "B-PR1"))
+        mvc.perform(get("/api/alarms").param("from", DAY).param("to", DAY).param("equipmentId", "B-PR1"))
                 .andExpect(jsonPath("$.content[0].itemName").isEmpty()) // 고장 신호 알람은 항목이 없어요
                 .andExpect(jsonPath("$.content[0].clearedAt").value("2026-11-10T09:18:00+09:00"));
-        mvc.perform(patch("/api/v1/alarms/381/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
+        mvc.perform(patch("/api/alarms/381/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ackUserId").value(1))
                 .andExpect(jsonPath("$.ackedAt").exists());
-        mvc.perform(patch("/api/v1/alarms/382/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
+        mvc.perform(patch("/api/alarms/382/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
                 .andExpect(jsonPath("$.ackedAt").value("2026-11-10T09:20:00+09:00")); // 이미 확인된 알람은 그대로
-        mvc.perform(patch("/api/v1/alarms/381/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":999}"))
+        mvc.perform(patch("/api/alarms/381/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":999}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(patch("/api/v1/alarms/381/ack"))
+        mvc.perform(patch("/api/alarms/381/ack"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(patch("/api/v1/alarms/999/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
+        mvc.perform(patch("/api/alarms/999/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("ALARM_NOT_FOUND"));
     }
 
     @Test
     void m08InspectionsFilterAndPage() throws Exception {
-        mvc.perform(get("/api/v1/inspections").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/inspections").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.totalElements").value(2))
                 .andExpect(jsonPath("$.content[0].inspectionId").value(9002))
                 .andExpect(jsonPath("$.content[0].productId").value("P-2"));
-        mvc.perform(get("/api/v1/inspections").param("from", DAY).param("to", DAY).param("lineId", "B").param("result", "NG"))
+        mvc.perform(get("/api/inspections").param("from", DAY).param("to", DAY).param("lineId", "B").param("result", "NG"))
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].paintId").value("PT1"));
-        mvc.perform(get("/api/v1/inspections").param("from", DAY).param("to", DAY).param("result", "RECHECK"))
+        mvc.perform(get("/api/inspections").param("from", DAY).param("to", DAY).param("result", "RECHECK"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(get("/api/v1/inspections").param("from", "2026-11-11").param("to", DAY))
+        mvc.perform(get("/api/inspections").param("from", "2026-11-11").param("to", DAY))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void m09ChangesCurrentPaintAndWritesHistory() throws Exception {
-        mvc.perform(put("/api/v1/lines/A/paint-route").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/lines/A/paint-route").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"paintId\":\"PT2\",\"reason\":\"PT1 점검\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currentPaintId").value("PT2"))
@@ -175,58 +175,58 @@ class MonitoringApiTest {
         assertThat(jdbc.queryForObject("select current_paint_id from line where line_id = 'A'", String.class)).isEqualTo("PT2");
         assertThat(jdbc.queryForObject("select from_paint_id || '>' || to_paint_id from paint_route_history", String.class))
                 .isEqualTo("PT1>PT2");
-        mvc.perform(put("/api/v1/lines/A/paint-route").contentType(MediaType.APPLICATION_JSON).content("{\"paintId\":\"A-PR1\"}"))
+        mvc.perform(put("/api/lines/A/paint-route").contentType(MediaType.APPLICATION_JSON).content("{\"paintId\":\"A-PR1\"}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(put("/api/v1/lines/Z/paint-route").contentType(MediaType.APPLICATION_JSON).content("{\"paintId\":\"PT2\"}"))
+        mvc.perform(put("/api/lines/Z/paint-route").contentType(MediaType.APPLICATION_JSON).content("{\"paintId\":\"PT2\"}"))
                 .andExpect(status().isNotFound());
     }
 
     @Test
     void m10m11Thresholds() throws Exception {
-        mvc.perform(get("/api/v1/alarms/thresholds").param("process", "PRESS"))
+        mvc.perform(get("/api/alarms/thresholds").param("process", "PRESS"))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].id").value(3))
                 .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$[0].process").value("PRESS"))
                 .andExpect(jsonPath("$[0].metric").value("pressureLeft"))
                 .andExpect(jsonPath("$[0].high").value(285.3));
-        mvc.perform(get("/api/v1/alarms/thresholds").param("equipmentId", "PT1"))
+        mvc.perform(get("/api/alarms/thresholds").param("equipmentId", "PT1"))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].metric").value("ph"));
-        mvc.perform(get("/api/v1/alarms/thresholds").param("equipmentId", "X-PR9"))
+        mvc.perform(get("/api/alarms/thresholds").param("equipmentId", "X-PR9"))
                 .andExpect(status().isNotFound());
-        mvc.perform(put("/api/v1/alarms/thresholds/3").contentType(MediaType.APPLICATION_JSON).content("{\"low\":271,\"high\":286}"))
+        mvc.perform(put("/api/alarms/thresholds/3").contentType(MediaType.APPLICATION_JSON).content("{\"low\":271,\"high\":286}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.high").value(286.0))
                 .andExpect(jsonPath("$.updatedAt").exists());
         em.flush();
         assertThat(jdbc.queryForObject("select upper_limit from threshold where threshold_id = 3", Double.class)).isEqualTo(286.0);
-        mvc.perform(put("/api/v1/alarms/thresholds/3").contentType(MediaType.APPLICATION_JSON).content("{\"low\":300,\"high\":286}"))
+        mvc.perform(put("/api/alarms/thresholds/3").contentType(MediaType.APPLICATION_JSON).content("{\"low\":300,\"high\":286}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(put("/api/v1/alarms/thresholds/999").contentType(MediaType.APPLICATION_JSON).content("{\"low\":1,\"high\":2}"))
+        mvc.perform(put("/api/alarms/thresholds/999").contentType(MediaType.APPLICATION_JSON).content("{\"low\":1,\"high\":2}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("THRESHOLD_NOT_FOUND"));
     }
 
     @Test
     void m12ProcessEquipments() throws Exception {
-        mvc.perform(get("/api/v1/monitoring/processes/PRESS/equipments").param("lineId", "A"))
+        mvc.perform(get("/api/monitoring/processes/PRESS/equipments").param("lineId", "A"))
                 .andExpect(jsonPath("$.length()").value(3))
                 .andExpect(jsonPath("$[0].process").value("PRESS"));
-        mvc.perform(get("/api/v1/monitoring/processes/MILLING/equipments"))
+        mvc.perform(get("/api/monitoring/processes/MILLING/equipments"))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void e01EquipmentDataPagesAcrossTables() throws Exception {
-        mvc.perform(get("/api/v1/equipment-data").param("from", DAY).param("to", DAY).param("size", "2"))
+        mvc.perform(get("/api/equipment-data").param("from", DAY).param("to", DAY).param("size", "2"))
                 .andExpect(jsonPath("$.totalElements").value(3))
                 .andExpect(jsonPath("$.content.length()").value(2))
                 .andExpect(jsonPath("$.content[0].process").value("PRESS"))
                 .andExpect(jsonPath("$.content[0].values.pressureLeft").value(280.0));
-        mvc.perform(get("/api/v1/equipment-data").param("from", DAY).param("to", DAY).param("size", "2").param("page", "1"))
+        mvc.perform(get("/api/equipment-data").param("from", DAY).param("to", DAY).param("size", "2").param("page", "1"))
                 .andExpect(jsonPath("$.content.length()").value(1));
-        mvc.perform(get("/api/v1/equipment-data").param("from", DAY).param("to", DAY).param("result", "NG"))
+        mvc.perform(get("/api/equipment-data").param("from", DAY).param("to", DAY).param("result", "NG"))
                 .andExpect(jsonPath("$.totalElements").value(1));
     }
 }

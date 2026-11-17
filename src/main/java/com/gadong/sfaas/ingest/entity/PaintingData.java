@@ -1,6 +1,7 @@
 package com.gadong.sfaas.ingest.entity;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -11,9 +12,10 @@ public class PaintingData {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) @Column(name = "id") private Long id;
     @Column(name = "equipment_id") private String equipmentId;
     @Column(name = "measured_at") private LocalDateTime measuredAt;
-    @Column(name = "ph") private Double ph;
-    @Column(name = "temperature") private Double temperature;
-    @Column(name = "current") private Double current;
-    @Column(name = "voltage") private Double voltage;
+    @Column(name = "line_id") private String lineId;
+    @Column(name = "ph") private BigDecimal ph;
+    @Column(name = "temperature") private BigDecimal temperature;
+    @Column(name = "current") private BigDecimal current;
+    @Column(name = "voltage") private BigDecimal voltage;
     @Column(name = "result") private String result;
 }

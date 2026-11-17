@@ -44,22 +44,22 @@ class PlanningApiTest {
 
     @Test
     void g02g03UpsertDailyPlan() throws Exception {
-        mvc.perform(put("/api/v1/production/plans/2026-11-17").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/production/plans/2026-11-17").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"lineId\":\"A\",\"planQty\":1500}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.date").value("2026-11-17"))
                 .andExpect(jsonPath("$.planQty").value(1500));
-        mvc.perform(put("/api/v1/production/plans/2026-11-17").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/production/plans/2026-11-17").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"lineId\":\"A\",\"planQty\":1600}"))
                 .andExpect(jsonPath("$.planQty").value(1600));
-        mvc.perform(get("/api/v1/production/plans").param("from", "2026-11-17").param("to", "2026-11-17"))
+        mvc.perform(get("/api/production/plans").param("from", "2026-11-17").param("to", "2026-11-17"))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].lineId").value("A"))
                 .andExpect(jsonPath("$[0].planQty").value(1600));
-        mvc.perform(put("/api/v1/production/plans/2026-11-17").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/production/plans/2026-11-17").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"lineId\":\"A\",\"planQty\":-1}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(put("/api/v1/production/plans/2026-11-17").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/production/plans/2026-11-17").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"lineId\":\"Z\",\"planQty\":10}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("LINE_NOT_FOUND"));
@@ -67,7 +67,7 @@ class PlanningApiTest {
 
     @Test
     void r01r02Reports() throws Exception {
-        mvc.perform(get("/api/v1/reassignments").param("from", "2026-11-10").param("to", "2026-11-10"))
+        mvc.perform(get("/api/reassignments").param("from", "2026-11-10").param("to", "2026-11-10"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].reportId").value(12))
@@ -77,16 +77,16 @@ class PlanningApiTest {
                 .andExpect(jsonPath("$.content[0].stopMin").value(42))
                 .andExpect(jsonPath("$.content[0].lossQty").value(126))
                 .andExpect(jsonPath("$.content[0].createdAt").value("2026-11-10T09:55:00+09:00"));
-        mvc.perform(get("/api/v1/reassignments/12"))
+        mvc.perform(get("/api/reassignments/12"))
                 .andExpect(jsonPath("$.downtimeId").value(10))
                 .andExpect(jsonPath("$.sourceLineId").value("A"))
                 .andExpect(jsonPath("$.details[0].targetLineId").value("B"))
                 .andExpect(jsonPath("$.details[0].spareCapacity").value(300))
                 .andExpect(jsonPath("$.details[0].addQty").value(126));
-        mvc.perform(get("/api/v1/reassignments/999"))
+        mvc.perform(get("/api/reassignments/999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("REASSIGNMENT_NOT_FOUND"));
-        mvc.perform(patch("/api/v1/reassignments/12/approve").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(patch("/api/reassignments/12/approve").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isNotFound()); // 승인 API는 없어요(v3)
     }
 
@@ -99,14 +99,14 @@ class PlanningApiTest {
                         + "('B-SL','슬리터B','SLITTING','B',1,true)",
                 "insert into downtime_code(code, code_name, is_planned) values ('PL_PM','예방보전',true)");
 
-        mvc.perform(post("/api/v1/planned-stops").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/planned-stops").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"lineId\":\"A\",\"reasonCode\":\"PL_PM\",\"startAt\":\"2026-11-10T12:00:00+09:00\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("S"))
                 .andExpect(jsonPath("$.startAt").value("2026-11-10T12:00:00+09:00"))
                 .andExpect(jsonPath("$.stopId").exists());
         long stopId = jdbc.queryForObject("select max(stop_group_id) from downtime_event", Long.class);
-        mvc.perform(get("/api/v1/planned-stops").param("from", "2026-11-10").param("to", "2026-11-10"))
+        mvc.perform(get("/api/planned-stops").param("from", "2026-11-10").param("to", "2026-11-10"))
                 .andExpect(jsonPath("$.length()").value(1)) // 설비 4줄이 stopId 1건으로 묶여요
                 .andExpect(jsonPath("$[0].stopId").value(stopId))
                 .andExpect(jsonPath("$[0].lineId").value("A"))
@@ -116,22 +116,22 @@ class PlanningApiTest {
                 .andExpect(jsonPath("$[0].inProgress").value(true))
                 .andExpect(jsonPath("$[0].endAt").isEmpty());
 
-        mvc.perform(post("/api/v1/planned-stops").contentType(MediaType.APPLICATION_JSON).content("{\"lineId\":\"A\",\"reasonCode\":\"PL_PM\"}"))
+        mvc.perform(post("/api/planned-stops").contentType(MediaType.APPLICATION_JSON).content("{\"lineId\":\"A\",\"reasonCode\":\"PL_PM\"}"))
                 .andExpect(status().isConflict()) // 같은 라인에 진행 중인 계획정지
                 .andExpect(jsonPath("$.code").value("PLANNED_STOP_CONFLICT"));
-        mvc.perform(post("/api/v1/planned-stops").contentType(MediaType.APPLICATION_JSON).content("{\"lineId\":\"B\",\"reasonCode\":\"UP_BREAKDOWN\"}"))
+        mvc.perform(post("/api/planned-stops").contentType(MediaType.APPLICATION_JSON).content("{\"lineId\":\"B\",\"reasonCode\":\"UP_BREAKDOWN\"}"))
                 .andExpect(status().isBadRequest()); // 계획정지 사유가 아니에요
 
-        mvc.perform(patch("/api/v1/planned-stops/" + stopId + "/end").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(patch("/api/planned-stops/" + stopId + "/end").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"endAt\":\"2026-11-10T13:00:00+09:00\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.minutes").value(60))
                 .andExpect(jsonPath("$.endAt").value("2026-11-10T13:00:00+09:00"));
-        mvc.perform(get("/api/v1/planned-stops").param("from", "2026-11-10").param("to", "2026-11-10").param("inProgress", "false"))
+        mvc.perform(get("/api/planned-stops").param("from", "2026-11-10").param("to", "2026-11-10").param("inProgress", "false"))
                 .andExpect(jsonPath("$[0].endAt").value("2026-11-10T13:00:00+09:00"));
-        mvc.perform(patch("/api/v1/planned-stops/" + stopId + "/end").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(patch("/api/planned-stops/" + stopId + "/end").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest()); // 이미 종료
-        mvc.perform(patch("/api/v1/planned-stops/999/end").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(patch("/api/planned-stops/999/end").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("PLANNED_STOP_NOT_FOUND"));
     }

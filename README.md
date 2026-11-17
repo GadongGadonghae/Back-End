@@ -70,7 +70,7 @@ gradlew.bat test
 - 시간대는 **Asia/Seoul** 고정이에요.
 - Controller와 MQTT 수신부에는 판정 로직을 넣지 않고 Service를 불러요. 판정 규칙은 `judge`에만 둬요.
 - Entity를 그대로 응답하지 않고 DTO로 바꿔 내보내요.
-- API 주소·응답 형식, MQTT 토픽, WebSocket 경로는 **[API 명세서 v2](https://claude.ai/artifact/TFF4RzC1MZqwoATAQZYVmx)**가 기준이에요. Base URL은 `/api/v1`.
+- API 주소·응답 형식, MQTT 토픽, WebSocket 경로는 **[API 명세서 v3](https://claude.ai/artifact/TFF4RzC1MZqwoATAQZYVmx)**가 기준이에요. Base URL은 `/api`.
 
 ## 🌿 브랜치
 

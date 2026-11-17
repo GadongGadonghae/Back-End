@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "기준정보")
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api")
 public class MasterController {
 
     private final MasterService masterService;

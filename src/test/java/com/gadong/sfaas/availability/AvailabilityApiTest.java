@@ -53,7 +53,7 @@ class AvailabilityApiTest {
     @Test
     void u07SummarizesUnplannedWithinPeriod() throws Exception {
         // 비계획: 2400 + 30 + 1200 + 600(23:50~24:00만) = 4230초 = 70분, 고장 건수는 1분 이상인 1·5번만
-        mvc.perform(get("/api/v1/downtime/summary").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/downtime/summary").param("from", DAY).param("to", DAY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalMin").value(70))
                 .andExpect(jsonPath("$.byReason[0].reasonCode").value("UP_ALARM"))
@@ -65,20 +65,20 @@ class AvailabilityApiTest {
                 .andExpect(jsonPath("$.byGroup.length()").value(2)) // 공용 PT1은 라인 묶음에서 빠져요
                 .andExpect(jsonPath("$.byGroup[0].key").value("A"))
                 .andExpect(jsonPath("$.byGroup[0].UP_BREAKDOWN").value(40));
-        mvc.perform(get("/api/v1/downtime/summary").param("from", DAY).param("to", DAY).param("groupBy", "process"))
+        mvc.perform(get("/api/downtime/summary").param("from", DAY).param("to", DAY).param("groupBy", "process"))
                 .andExpect(jsonPath("$.byGroup[0].key").value("PAINTING"));
-        mvc.perform(get("/api/v1/downtime/summary").param("from", DAY).param("to", DAY).param("groupBy", "shift"))
+        mvc.perform(get("/api/downtime/summary").param("from", DAY).param("to", DAY).param("groupBy", "shift"))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void u08FiltersEvents() throws Exception {
-        mvc.perform(get("/api/v1/downtime/events").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.totalElements").value(4)) // 30초짜리 2번 제외
                 .andExpect(jsonPath("$.content[0].eventId").value(5))
                 .andExpect(jsonPath("$.content[0].inProgress").value(true))
                 .andExpect(jsonPath("$.content[0].endAt").isEmpty());
-        mvc.perform(get("/api/v1/downtime/events").param("from", DAY).param("to", DAY).param("actionUserId", "1"))
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("actionUserId", "1"))
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].minutes").value(40))
                 .andExpect(jsonPath("$.content[0].actionUserId").value(1))
@@ -87,50 +87,50 @@ class AvailabilityApiTest {
                 .andExpect(jsonPath("$.content[0].detail").value("압력 상한 초과"))
                 .andExpect(jsonPath("$.content[0].actionAt").value("2026-11-10T09:50:00+09:00"))
                 .andExpect(jsonPath("$.content[0].startAt").value("2026-11-10T09:00:00+09:00"));
-        mvc.perform(get("/api/v1/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0"))
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0"))
                 .andExpect(jsonPath("$.totalElements").value(5));
-        mvc.perform(get("/api/v1/downtime/events").param("from", DAY).param("to", DAY).param("inProgress", "true"))
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("inProgress", "true"))
                 .andExpect(jsonPath("$.totalElements").value(1));
-        mvc.perform(get("/api/v1/downtime/events").param("from", DAY).param("to", DAY).param("lineId", "A"))
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("lineId", "A"))
                 .andExpect(jsonPath("$.totalElements").value(1));
     }
 
     @Test
     void u09CorrectsReasonMemoAndActionBy() throws Exception {
-        mvc.perform(patch("/api/v1/downtime/events/2").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(patch("/api/downtime/events/2").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reasonCode\":\"UP_DELAY\",\"memo\":\"자재 대기\",\"actionUserId\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reasonCode").value("UP_DELAY"))
                 .andExpect(jsonPath("$.actionUserId").value(1))
                 .andExpect(jsonPath("$.actionUserName").value("김정비"));
         em.flush();
-        mvc.perform(get("/api/v1/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0").param("reasonCode", "UP_DELAY"))
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0").param("reasonCode", "UP_DELAY"))
                 .andExpect(jsonPath("$.content[0].actionUserName").value("김정비"))
                 .andExpect(jsonPath("$.content[0].memo").value("자재 대기"));
-        mvc.perform(patch("/api/v1/downtime/events/2").contentType(MediaType.APPLICATION_JSON).content("{\"actionUserId\":999}"))
+        mvc.perform(patch("/api/downtime/events/2").contentType(MediaType.APPLICATION_JSON).content("{\"actionUserId\":999}"))
                 .andExpect(status().isBadRequest()); // 없는 사용자
-        mvc.perform(patch("/api/v1/downtime/events/2").contentType(MediaType.APPLICATION_JSON).content("{\"reasonCode\":\"NOPE\"}"))
+        mvc.perform(patch("/api/downtime/events/2").contentType(MediaType.APPLICATION_JSON).content("{\"reasonCode\":\"NOPE\"}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(patch("/api/v1/downtime/events/999").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(patch("/api/downtime/events/999").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("DOWNTIME_NOT_FOUND"));
     }
 
     @Test
     void u10RanksLongBreakdowns() throws Exception {
-        mvc.perform(get("/api/v1/downtime/top").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/downtime/top").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].equipmentId").value("B-PR1")) // 진행 중이라 가장 길어요
                 .andExpect(jsonPath("$[1].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$[1].totalMin").value(40))
                 .andExpect(jsonPath("$[1].count").value(1));
-        mvc.perform(get("/api/v1/downtime/top").param("from", DAY).param("to", DAY).param("limit", "1"))
+        mvc.perform(get("/api/downtime/top").param("from", DAY).param("to", DAY).param("limit", "1"))
                 .andExpect(jsonPath("$.length()").value(1));
     }
 
     @Test
     void u12StatusTimelineWithReason() throws Exception {
-        mvc.perform(get("/api/v1/equipments/A-PR1/status-history").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/equipments/A-PR1/status-history").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.length()").value(4))
                 .andExpect(jsonPath("$[0].status").value("R"))
                 .andExpect(jsonPath("$[0].reasonCode").isEmpty())
@@ -139,7 +139,7 @@ class AvailabilityApiTest {
                 .andExpect(jsonPath("$[3].status").value("DC"))
                 .andExpect(jsonPath("$[3].reasonCode").isEmpty())
                 .andExpect(jsonPath("$[3].endAt").isEmpty());
-        mvc.perform(get("/api/v1/equipments/X-PR9/status-history").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/equipments/X-PR9/status-history").param("from", DAY).param("to", DAY))
                 .andExpect(status().isNotFound());
     }
 }
