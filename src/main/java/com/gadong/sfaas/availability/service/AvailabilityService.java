@@ -1,94 +1,243 @@
 package com.gadong.sfaas.availability.service;
 
+import static com.gadong.sfaas.global.util.Checks.invalid;
+
 import com.gadong.sfaas.availability.dto.AvailabilityDtos.*;
+import com.gadong.sfaas.global.exception.BusinessException;
+import com.gadong.sfaas.global.exception.ErrorCode;
 import com.gadong.sfaas.global.response.PageResponse;
+import com.gadong.sfaas.global.util.Checks;
+import com.gadong.sfaas.global.util.Kst;
+import com.gadong.sfaas.global.util.Sql;
+import com.gadong.sfaas.judge.entity.Downtime;
+import com.gadong.sfaas.judge.repository.DowntimeRepository;
+import com.gadong.sfaas.master.repository.DowntimeCodeRepository;
+import com.gadong.sfaas.master.service.MasterService;
+import java.time.Duration;
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 가동률 화면 API 서비스.
+ * 가동률 화면 API 서비스. 비가동(U-07~U-10)과 상태 타임라인(U-12)은 downtime · status_log에서 읽어요.
  *
- * <p>TODO(BE1): 지금은 API 명세서 v2 예시 값을 돌려주는 stub이에요. 가동률 = (계획 가동시간 − 비계획정지 시간) ÷ 계획 가동시간 × 100 을
- * status_log · downtime 구간으로 계산하도록 바꿔요. 시간당 생산 능력이 정해질 때까지 performance·oee·lossQty 는 null 이에요.
+ * <p>TODO(BE1): U-01~U-06, U-11은 계획 가동시간·목표 가동률·시간당 생산 능력 기준이 정해지지 않아 아직 stub이에요.
  */
 @Service
+@Transactional(readOnly = true)
 public class AvailabilityService {
 
-    private static final OffsetDateTime T0 = OffsetDateTime.parse("2026-11-18T09:30:00+09:00");
+    /** 조회 기간과 겹치는 비가동 구간. 조치 담당자 이름은 users(auth 소유) 테이블에서 가져와요 */
+    private static final String DOWNTIME_SELECT = """
+            SELECT d.downtime_id, d.equipment_id, e.line_id, e.process_id, d.status, d.code,
+                   d.started_at, d.ended_at, d.action_memo, d.action_user_id, u.user_name
+            FROM downtime_event d
+            JOIN equipment e ON e.equipment_id = d.equipment_id
+            JOIN downtime_code c ON c.code = d.code
+            LEFT JOIN users u ON u.user_id = d.action_user_id
+            WHERE d.started_at < :to AND (d.ended_at IS NULL OR d.ended_at > :from)""";
 
-    /** U-01 */
+    private record Stop(long id, String equipmentId, String lineId, String process, String status, String code,
+                        LocalDateTime start, LocalDateTime end, String memo, Integer actionUserId, String actionUserName) {
+        long minutes() {
+            return Kst.minutes(start, end);
+        }
+
+        /** 조회 기간 [from, to) 안에 들어간 길이(초) */
+        long secondsWithin(LocalDateTime from, LocalDateTime to) {
+            LocalDateTime s = start.isBefore(from) ? from : start;
+            LocalDateTime e = end == null ? Kst.now() : end;
+            if (e.isAfter(to)) e = to;
+            return e.isAfter(s) ? Duration.between(s, e).getSeconds() : 0;
+        }
+    }
+
+    private final NamedParameterJdbcTemplate jdbc;
+    private final MasterService masterService;
+    private final UserLookup users;
+    private final DowntimeRepository downtimeRepository;
+    private final DowntimeCodeRepository downtimeCodeRepository;
+
+    public AvailabilityService(NamedParameterJdbcTemplate jdbc, MasterService masterService, UserLookup users,
+                               DowntimeRepository downtimeRepository, DowntimeCodeRepository downtimeCodeRepository) {
+        this.jdbc = jdbc;
+        this.masterService = masterService;
+        this.users = users;
+        this.downtimeRepository = downtimeRepository;
+        this.downtimeCodeRepository = downtimeCodeRepository;
+    }
+
+    /** U-01 (stub) */
     public SummaryResponse summary(LocalDate from, LocalDate to, String lineId) {
         return new SummaryResponse(95.0, 91.4, null, 91.4, null, 91.5, 2880, 248, null);
     }
 
-    /** U-02 */
+    /** U-02 (stub) */
     public List<TrendResponse> trend(LocalDate from, LocalDate to, String unit, String lineId) {
         return List.of(new TrendResponse("2026-11-17", 95.0, 92.1));
     }
 
-    /** U-03 */
+    /** U-03 (stub) */
     public List<ByProcessResponse> byProcess(LocalDate from, LocalDate to, String lineId) {
         return List.of(new ByProcessResponse("PRESS", 89.3, null, 132));
     }
 
-    /** U-04 */
+    /** U-04 (stub) */
     public List<ByLineResponse> byLine(LocalDate from, LocalDate to) {
         return List.of(new ByLineResponse("A", 93.0, 4));
     }
 
-    /** U-05 */
+    /** U-05 (stub) */
     public List<ByEquipmentResponse> byEquipment(LocalDate from, LocalDate to, String process, int limit) {
         return List.of(new ByEquipmentResponse("C-WD", 78.5));
     }
 
-    /** U-06 */
+    /** U-06 (stub) */
     public List<ByWeekdayResponse> byWeekday(LocalDate from, LocalDate to, String lineId) {
         return List.of(new ByWeekdayResponse("MON", 96.6, 108));
     }
 
-    /** U-07 */
+    /**
+     * U-07: 비계획정지(is_planned = FALSE)만 모아요. 시간은 조회 기간 안에 들어간 만큼, 건수는 1분 이상인 구간만 세요.
+     * byGroup은 라인 또는 공정별이고, groupBy=line이면 라인이 없는 공용 설비(도장·검사)는 빠져요.
+     */
     public DowntimeSummaryResponse downtimeSummary(LocalDate from, LocalDate to, String groupBy) {
-        Map<String, Object> group = new LinkedHashMap<>();
-        group.put("key", "A");
-        group.put("totalMin", 298);
-        group.put("UP_BREAKDOWN", 45);
-        return new DowntimeSummaryResponse("2026-11-17", "2026-11-18", 1616,
-                List.of(new DowntimeSummaryResponse.ReasonStat("UP_BREAKDOWN", 175, 12, 10.8),
-                        new DowntimeSummaryResponse.ReasonStat("UP_SHORTAGE", 235, 20, 14.5)),
-                List.of(group));
+        Checks.period(from, to);
+        if (!"line".equals(groupBy) && !"process".equals(groupBy)) throw invalid("groupBy는 line 또는 process입니다");
+        LocalDateTime f = Kst.start(from), t = Kst.endExclusive(to);
+        List<Stop> stops = stops(new StringBuilder(" AND c.is_planned = FALSE"), Sql.period(from, to));
+
+        long totalSec = 0;
+        Map<String, long[]> byReason = new TreeMap<>(); // {초, 건수}
+        Map<String, Map<String, Long>> byGroup = new TreeMap<>(); // key → {코드 → 초}
+        for (Stop s : stops) {
+            long sec = s.secondsWithin(f, t);
+            totalSec += sec;
+            long[] r = byReason.computeIfAbsent(s.code(), k -> new long[2]);
+            r[0] += sec;
+            if (s.minutes() >= 1) r[1]++;
+            String key = "line".equals(groupBy) ? s.lineId() : s.process();
+            if (key != null) byGroup.computeIfAbsent(key, k -> new TreeMap<>()).merge(s.code(), sec, Long::sum);
+        }
+
+        long total = totalSec;
+        List<DowntimeSummaryResponse.ReasonStat> reasons = byReason.entrySet().stream()
+                .map(e -> new DowntimeSummaryResponse.ReasonStat(e.getKey(), e.getValue()[0] / 60, (int) e.getValue()[1],
+                        total == 0 ? 0 : Math.round(e.getValue()[0] * 1000.0 / total) / 10.0))
+                .toList();
+        List<Map<String, Object>> groups = new ArrayList<>();
+        byGroup.forEach((key, codes) -> {
+            Map<String, Object> g = new LinkedHashMap<>();
+            g.put("key", key);
+            g.put("totalMin", codes.values().stream().mapToLong(Long::longValue).sum() / 60);
+            codes.forEach((code, sec) -> g.put(code, sec / 60));
+            groups.add(g);
+        });
+        return new DowntimeSummaryResponse(from.toString(), to.toString(), totalSec / 60, reasons, groups);
     }
 
-    /** U-08: 1분 이상 정지만 비가동 1건으로 세요(minMinutes=1) */
+    /** U-08 */
     public PageResponse<DowntimeEventResponse> downtimeEvents(LocalDate from, LocalDate to, String lineId, String process,
                                                               String status, String reasonCode, Boolean inProgress,
-                                                              String actionBy, String equipmentId, int minMinutes,
+                                                              Integer actionUserId, String equipmentId, int minMinutes,
                                                               int page, int size) {
-        return PageResponse.of(List.of(new DowntimeEventResponse(1, "A", "A-PR1", "PRESS", "D", "UP_BREAKDOWN",
-                T0.minusMinutes(40), T0, 40, false, "홍길동", "금형 교체")));
+        Checks.period(from, to);
+        Checks.page(page, size);
+        if (minMinutes < 0) throw invalid("minMinutes는 0 이상입니다");
+        masterService.requireLine(lineId);
+        MapSqlParameterSource p = Sql.period(from, to);
+        StringBuilder where = new StringBuilder();
+        Sql.eq(where, p, "e.line_id", "lineId", lineId);
+        Sql.eq(where, p, "e.process_id", "process", process == null ? null : process.toUpperCase());
+        Sql.eq(where, p, "d.status", "status", status);
+        Sql.eq(where, p, "d.code", "reasonCode", reasonCode);
+        Sql.eq(where, p, "d.action_user_id", "actionUserId", actionUserId);
+        Sql.eq(where, p, "d.equipment_id", "eq", equipmentId);
+        if (inProgress != null) where.append(inProgress ? " AND d.ended_at IS NULL" : " AND d.ended_at IS NOT NULL");
+
+        // shortcut: minMinutes 필터와 페이지 나누기를 메모리에서 해요. 기간 안 비가동이 수만 건을 넘으면 SQL로 옮겨요
+        List<Stop> stops = stops(where, p).stream().filter(s -> s.minutes() >= minMinutes).toList();
+        List<DowntimeEventResponse> content = stops.stream().skip((long) page * size).limit(size)
+                .map(s -> new DowntimeEventResponse(s.id(), s.lineId(), s.equipmentId(), s.process(), s.status(), s.code(),
+                        Kst.of(s.start()), Kst.of(s.end()), s.minutes(), s.end() == null, s.actionUserId(), s.actionUserName(),
+                        s.memo() == null ? "" : s.memo()))
+                .toList();
+        return new PageResponse<>(content, stops.size());
     }
 
-    /** U-09: 자동 판정된 사유 중 틀린 것만 사람이 수정해요 */
+    /** U-09: reasonCode·memo·actionUserId 중 보낸 값만 바꿔요. 응답에 조치 담당자 이름을 붙여요 */
+    @Transactional
     public DowntimeEventUpdateResponse updateDowntimeEvent(long eventId, DowntimeEventUpdateRequest request) {
-        return new DowntimeEventUpdateResponse(eventId, request.reasonCode(), request.actionBy());
+        if (request == null) throw invalid("요청 본문이 필요합니다");
+        Downtime downtime = downtimeRepository.findById(eventId).orElseThrow(() ->
+                new BusinessException(ErrorCode.DOWNTIME_NOT_FOUND, "비가동 이력 " + eventId + "를 찾을 수 없습니다"));
+        if (request.reasonCode() != null && !downtimeCodeRepository.existsById(request.reasonCode())) {
+            throw invalid("비가동 사유 코드 " + request.reasonCode() + "가 없습니다");
+        }
+        if (request.memo() != null && request.memo().length() > 500) throw invalid("memo는 500자 이하입니다");
+        if (request.actionUserId() != null && !users.exists(request.actionUserId())) {
+            throw invalid("사용자 " + request.actionUserId() + "를 찾을 수 없습니다");
+        }
+        downtime.correct(request.reasonCode(), request.memo(), request.actionUserId(), Kst.now());
+        return new DowntimeEventUpdateResponse(eventId, downtime.getCode(), downtime.getActionUserId(),
+                users.name(downtime.getActionUserId()));
     }
 
-    /** U-10 */
+    /** U-10: 장비고장(UP_BREAKDOWN) 중 minMinutes 이상인 구간을 설비별로 합쳐 긴 순으로 */
     public List<DowntimeTopResponse> downtimeTop(LocalDate from, LocalDate to, int minMinutes, int limit) {
-        return List.of(new DowntimeTopResponse("B-PR3", 265, 12));
+        Checks.period(from, to);
+        if (minMinutes < 0 || limit < 1 || limit > 100) throw invalid("minMinutes는 0 이상, limit은 1~100입니다");
+        Map<String, long[]> byEquipment = new LinkedHashMap<>(); // {분, 건수}
+        for (Stop s : stops(new StringBuilder(" AND d.code = 'UP_BREAKDOWN'"), Sql.period(from, to))) {
+            long m = s.minutes();
+            if (m < minMinutes) continue;
+            long[] v = byEquipment.computeIfAbsent(s.equipmentId(), k -> new long[2]);
+            v[0] += m;
+            v[1]++;
+        }
+        return byEquipment.entrySet().stream()
+                .sorted(Comparator.comparingLong((Map.Entry<String, long[]> e) -> e.getValue()[0]).reversed())
+                .limit(limit)
+                .map(e -> new DowntimeTopResponse(e.getKey(), e.getValue()[0], (int) e.getValue()[1]))
+                .toList();
     }
 
-    /** U-11 */
+    /** U-11 (stub) */
     public List<YieldResponse> yield(LocalDate from, LocalDate to, String unit, String groupBy) {
         return List.of(new YieldResponse("2026-11-17", 1180, 1121, 95.0));
     }
 
-    /** U-12 */
+    /** U-12: equipment_status_history 구간. R·DC가 아닌 구간의 사유는 downtime_id로 연결된 비가동 이력에서 가져와요 */
     public List<StatusSegmentResponse> statusHistory(String equipmentId, LocalDate from, LocalDate to) {
-        return List.of(new StatusSegmentResponse("R", T0.minusHours(1), T0.minusMinutes(40), null),
-                new StatusSegmentResponse("D", T0.minusMinutes(40), T0, "UP_BREAKDOWN"));
+        Checks.period(from, to);
+        masterService.equipment(equipmentId);
+        MapSqlParameterSource p = Sql.period(from, to).addValue("eq", equipmentId);
+        return jdbc.query("""
+                SELECT s.status, s.started_at, s.ended_at, d.code
+                FROM equipment_status_history s
+                LEFT JOIN downtime_event d ON d.downtime_id = s.downtime_id
+                WHERE s.equipment_id = :eq AND s.started_at < :to AND (s.ended_at IS NULL OR s.ended_at > :from)
+                ORDER BY s.started_at""", p, (rs, n) -> {
+            String status = rs.getString("status").trim();
+            return new StatusSegmentResponse(status, Kst.of(rs.getObject("started_at", LocalDateTime.class)),
+                    Kst.of(rs.getObject("ended_at", LocalDateTime.class)), rs.getString("code"));
+        });
+    }
+
+    private List<Stop> stops(StringBuilder where, MapSqlParameterSource p) {
+        return jdbc.query(DOWNTIME_SELECT + where + " ORDER BY d.started_at DESC, d.downtime_id DESC", p, (rs, n) ->
+                new Stop(rs.getLong("downtime_id"), rs.getString("equipment_id"), rs.getString("line_id"),
+                        rs.getString("process_id"), rs.getString("status").trim(), rs.getString("code"),
+                        rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class),
+                        rs.getString("action_memo"), rs.getObject("action_user_id", Integer.class), rs.getString("user_name")));
     }
 }

@@ -37,12 +37,12 @@ public final class AvailabilityDtos {
     /** U-08 */
     public record DowntimeEventResponse(long eventId, String lineId, String equipmentId, String process, String status,
                                         String reasonCode, OffsetDateTime startAt, OffsetDateTime endAt, long minutes,
-                                        boolean inProgress, String actionBy, String memo) {}
+                                        boolean inProgress, Integer actionUserId, String actionUserName, String memo) {}
 
-    /** U-09 */
-    public record DowntimeEventUpdateRequest(String reasonCode, String memo, String actionBy) {}
+    /** U-09: 조치 담당자는 이름이 아니라 번호(동명이인 대비). 응답에 이름을 붙여요 */
+    public record DowntimeEventUpdateRequest(String reasonCode, String memo, Integer actionUserId) {}
 
-    public record DowntimeEventUpdateResponse(long eventId, String reasonCode, String actionBy) {}
+    public record DowntimeEventUpdateResponse(long eventId, String reasonCode, Integer actionUserId, String actionUserName) {}
 
     /** U-10 */
     public record DowntimeTopResponse(String equipmentId, long totalMin, int count) {}

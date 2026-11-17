@@ -9,3 +9,5 @@ spring:
     hibernate:
       ddl-auto: create-drop     # 테스트용 메모리 DB에만 적용돼요
     open-in-view: false
+  jackson:
+    time-zone: Asia/Seoul       # main application.yml과 같게: 응답 시각에 +09:00

@@ -27,9 +27,9 @@ public class ProductionController {
         this.service = service;
     }
 
-    @Operation(summary = "M-07 출고 양품/불량 카운트",
+    @Operation(summary = "M-07 출고 양품/불량 카운트 (stub)",
             description = "P1. total = inspected + processNg, ok = inspected − ngVision, yieldRate = ok ÷ total. "
-                    + "lineId 를 지정하면 byProcess 가 공정별로 채워져요. groupBy=paint 는 P2.")
+                    + "공용 도장 설비의 불량을 라인에 나누는 기준이 정해지지 않아 아직 예시 값이에요.")
     @GetMapping("/production/counts")
     public ProductionCountsResponse counts(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
                                            @RequestParam(required = false) String lineId,
@@ -37,7 +37,7 @@ public class ProductionController {
         return service.counts(date, lineId, groupBy);
     }
 
-    @Operation(summary = "M-08 비전 검사 결과 목록", description = "P2. result 는 OK/NG. paintId 필터는 P2.")
+    @Operation(summary = "M-08 비전 검사 결과 목록", description = "P2. result 는 OK/NG")
     @GetMapping("/inspections")
     public PageResponse<InspectionResponse> inspections(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                                         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
@@ -49,20 +49,21 @@ public class ProductionController {
         return service.inspections(from, to, lineId, paintId, result, page, size);
     }
 
-    @Operation(summary = "M-09 도장 경로 전환", description = "P2 · 중간발표 이후")
+    @Operation(summary = "M-09 도장 경로 전환", description = "P2(중간발표 이후). line.current_paint_id 변경 + paint_route_history 기록. Q-03 MQTT 명령은 연동 전이에요")
     @PutMapping("/lines/{lineId}/paint-route")
     public PaintRouteResponse changePaintRoute(@PathVariable String lineId, @RequestBody PaintRouteRequest request) {
         return service.changePaintRoute(lineId, request);
     }
 
-    @Operation(summary = "M-13 공정별 재공품(WIP) 수량", description = "P1. 앞 공정 OK 행 수 − 다음 공정 행 수")
+    @Operation(summary = "M-13 공정별 재공품(WIP) 수량 (stub)",
+            description = "P1. 앞 공정 OK 행 수 − 다음 공정 행 수. 프레스 4대 행 수를 세는 기준이 정해지지 않아 아직 예시 값이에요.")
     @GetMapping("/production/wip")
     public List<WipResponse> wip(@RequestParam(required = false) String lineId) {
         return service.wip(lineId);
     }
 
     @Operation(summary = "E-01 설비 데이터 조회 (공정별 테이블의 사이클 단위 행)",
-            description = "P2. values 의 키 이름은 KAMP CSV 컬럼명에 맞춰 확정해요.")
+            description = "P2. values 키는 DB 컬럼명의 camelCase예요. 최신순")
     @GetMapping("/equipment-data")
     public PageResponse<EquipmentDataResponse> equipmentData(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,

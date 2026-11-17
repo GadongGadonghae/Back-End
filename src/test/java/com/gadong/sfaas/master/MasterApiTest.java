@@ -24,8 +24,8 @@ class MasterApiTest {
     private void seed() {
         jdbc.update("insert into process(process_id, process_name, seq) values ('PRESS','프레스',3)");
         jdbc.update("insert into process(process_id, process_name, seq) values ('SLITTING','슬리팅',2)");
-        jdbc.update("insert into line(line_id, line_name, paint_equipment_id) values ('A','A라인','PT1')");
-        jdbc.update("insert into line(line_id, line_name, paint_equipment_id) values ('B','B라인','PT1')");
+        jdbc.update("insert into line(line_id, line_name, default_paint_id, current_paint_id) values ('A','A라인','PT1','PT2')");
+        jdbc.update("insert into line(line_id, line_name, default_paint_id, current_paint_id) values ('B','B라인','PT1','PT1')");
         jdbc.update("insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values ('A-SL','A라인 슬리터','SLITTING','A',1,true)");
         jdbc.update("insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values ('A-PR2','A라인 프레스 2호기','PRESS','A',2,true)");
         jdbc.update("insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values ('A-PR1','A라인 프레스 1호기','PRESS','A',1,true)");
@@ -39,7 +39,8 @@ class MasterApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].lineId").value("A"))
-                .andExpect(jsonPath("$[0].defaultPaintId").value("PT1"));
+                .andExpect(jsonPath("$[0].defaultPaintId").value("PT1"))
+                .andExpect(jsonPath("$[0].currentPaintId").value("PT2"));
     }
 
     @Test

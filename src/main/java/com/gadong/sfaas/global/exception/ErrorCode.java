@@ -7,6 +7,11 @@ public enum ErrorCode {
     INVALID_REQUEST(HttpStatus.BAD_REQUEST, "요청 값이 올바르지 않습니다"),
     LINE_NOT_FOUND(HttpStatus.NOT_FOUND, "라인을 찾을 수 없습니다"),
     EQUIPMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "설비를 찾을 수 없습니다"),
+    // 아래 4개는 명세서에 없는 코드예요. EQUIPMENT_NOT_FOUND와 같은 이름 규칙으로 추가했어요
+    THRESHOLD_NOT_FOUND(HttpStatus.NOT_FOUND, "알람 기준치를 찾을 수 없습니다"),
+    ALARM_NOT_FOUND(HttpStatus.NOT_FOUND, "알람을 찾을 수 없습니다"),
+    DOWNTIME_NOT_FOUND(HttpStatus.NOT_FOUND, "비가동 이력을 찾을 수 없습니다"),
+    REASSIGNMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "재배정 보고서를 찾을 수 없습니다"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다");
 
     private final HttpStatus status;

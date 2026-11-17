@@ -33,7 +33,8 @@ public class PlanningController {
         this.service = service;
     }
 
-    @Operation(summary = "G-01 생산량 조회 (기간별·라인별·계획 대비)", description = "P2")
+    @Operation(summary = "G-01 생산량 조회 (기간별·라인별·계획 대비) (stub)",
+            description = "P2. 공용 도장 설비 불량을 라인에 나누는 기준이 정해지지 않아 아직 예시 값이에요.")
     @GetMapping("/production/summary")
     public List<ProductionSummaryResponse> productionSummary(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                              @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
@@ -57,7 +58,7 @@ public class PlanningController {
         return service.setPlan(date, request);
     }
 
-    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회. lossQty 는 시간당 생산 능력이 정해져야 계산돼요.")
+    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. status 는 PENDING/APPROVED. 보고서는 Spring Boot가 자동으로 만들어요.")
     @GetMapping("/reassignments")
     public PageResponse<ReassignmentReportResponse> reports(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                             @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
@@ -67,19 +68,19 @@ public class PlanningController {
         return service.reports(from, to, status, page, size);
     }
 
-    @Operation(summary = "R-02 재배정 보고서 상세 (라인별 추가 배정)", description = "P1. reassignment_detail 조회")
+    @Operation(summary = "R-02 재배정 보고서 상세 (라인별 추가 배정)", description = "P1. reassignment_detail 조회. approvedBy 는 사용자 번호예요.")
     @GetMapping("/reassignments/{reportId}")
     public ReassignmentDetailResponse report(@PathVariable long reportId) {
         return service.report(reportId);
     }
 
-    @Operation(summary = "R-03 재배정 관리자 승인", description = "P2")
+    @Operation(summary = "R-03 재배정 관리자 승인", description = "P2. approvedBy 는 사용자 번호(users.user_id). 승인 권한 확인은 JWT 연동 후예요.")
     @PatchMapping("/reassignments/{reportId}/approve")
     public ApproveResponse approve(@PathVariable long reportId, @RequestBody ApproveRequest request) {
         return service.approve(reportId, request);
     }
 
-    @Operation(summary = "S-01 계획정지 일정 조회", description = "P2. RSID 의 S 판정과 계획 가동시간 계산에 쓰여요.")
+    @Operation(summary = "S-01 계획정지 일정 조회 (stub)", description = "P2. 명세(일정·planId)와 DB(stop_group_id)가 달라 정해질 때까지 예시 값이에요.")
     @GetMapping("/planned-stops")
     public List<PlannedStopResponse> plannedStops(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                   @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
@@ -87,7 +88,7 @@ public class PlanningController {
         return service.plannedStops(from, to, lineId);
     }
 
-    @Operation(summary = "S-02 계획정지 일정 등록", description = "P2")
+    @Operation(summary = "S-02 계획정지 일정 등록 (stub)", description = "P2")
     @PostMapping("/planned-stops")
     @ResponseStatus(HttpStatus.CREATED)
     public PlannedStopCreatedResponse createPlannedStop(@RequestBody PlannedStopRequest request) {

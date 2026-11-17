@@ -12,7 +12,7 @@ public final class MonitoringDtos {
 
     /** M-01 · M-12 · W-01 공통 설비 상태 필드 */
     public record EquipmentStatusResponse(String equipmentId, String lineId, String process,
-                                          @Schema(description = "R 가동 / S 정지(계획) / I 대기 / D 고장·알람") String status,
+                                          @Schema(description = "R 가동 / S 정지(계획) / I 대기 / D 고장·알람 / DC 통신 끊김") String status,
                                           OffsetDateTime since,
                                           @Schema(description = "R 이면 null") String reasonCode,
                                           Map<String, Object> lastValues) {}
@@ -21,7 +21,7 @@ public final class MonitoringDtos {
     public record LineSummaryResponse(String lineId,
                                       @JsonProperty("R") int r, @JsonProperty("S") int s,
                                       @JsonProperty("I") int i, @JsonProperty("D") int d,
-                                      String worstStatus) {}
+                                      @JsonProperty("DC") int dc, String worstStatus) {}
 
     /** M-03 */
     public record MetricsResponse(String equipmentId, List<Series> metrics) {
@@ -29,8 +29,12 @@ public final class MonitoringDtos {
         public record Point(OffsetDateTime ts, double value, String result) {}
     }
 
-    /** M-04 · M-05 · W-02 */
+    /** M-04 · W-02 */
     public record AlarmResponse(long alarmId, String equipmentId, String level, String message, OffsetDateTime occurredAt) {}
+
+    /** M-05: M-04 필드 + 확인 시각 */
+    public record AlarmHistoryResponse(long alarmId, String equipmentId, String level, String message,
+                                       OffsetDateTime occurredAt, OffsetDateTime ackedAt) {}
 
     /** M-06 */
     public record AckRequest(String ackBy) {}
@@ -38,12 +42,12 @@ public final class MonitoringDtos {
     public record AckResponse(long alarmId, OffsetDateTime ackedAt) {}
 
     /** M-10 */
-    public record ThresholdResponse(long id, String process, String metric, Double low, Double high) {}
+    public record ThresholdResponse(int id, String equipmentId, String process, String metric, Double low, Double high) {}
 
     /** M-11 */
     public record ThresholdUpdateRequest(Double low, Double high) {}
 
-    public record ThresholdUpdateResponse(long id, Double low, Double high, OffsetDateTime updatedAt) {}
+    public record ThresholdUpdateResponse(int id, Double low, Double high, OffsetDateTime updatedAt) {}
 
     /** M-07: total(생산) = inspected(검사 수) + processNg(공정 불량), ok = inspected − ngVision, yieldRate = ok ÷ total × 100 */
     public record ProductionCountsResponse(String date, int total, int processNg, int inspected, int ngVision, int ok,
@@ -55,7 +59,7 @@ public final class MonitoringDtos {
     /** M-08 */
     public record InspectionResponse(long inspectionId, String lineId, String paintId, String result, OffsetDateTime inspectedAt) {}
 
-    /** M-09 (P2, 중간발표 이후) */
+    /** M-09 */
     public record PaintRouteRequest(String paintId, String reason) {}
 
     public record PaintRouteResponse(String lineId, String currentPaintId, OffsetDateTime changedAt) {}
