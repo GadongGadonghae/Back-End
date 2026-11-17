@@ -5,7 +5,6 @@ import static com.gadong.sfaas.global.util.Checks.invalid;
 import com.gadong.sfaas.global.util.Kst;
 import com.gadong.sfaas.master.service.MasterService;
 import com.gadong.sfaas.monitoring.dto.MonitoringDtos.CycleResponse;
-import com.gadong.sfaas.monitoring.dto.MonitoringDtos.HourlyResponse;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -16,7 +15,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 하루 안의 세부 집계: 시간대별 출고 양품(M-14), 설비별 사이클 수·평균 CT(M-15) */
+/** 하루 안의 세부 집계: 설비별 사이클 수·평균 CT(M-15). 시간대별 생산은 G-01 unit=hour */
 @Component
 @Transactional(readOnly = true)
 public class TodayStats {
@@ -26,30 +25,6 @@ public class TodayStats {
     public TodayStats(NamedParameterJdbcTemplate jdbc, MasterService masterService) {
         this.jdbc = jdbc;
         this.masterService = masterService;
-    }
-
-    /** M-14. done = 그 시간에 검사 OK(M-07 ok와 같은 기준). 오늘이면 지금 시각까지만 */
-    public HourlyResponse hourly(LocalDate date, String lineId) {
-        masterService.requireLine(lineId);
-        LocalDate today = Kst.now().toLocalDate();
-        LocalDate day = date == null ? today : date;
-        MapSqlParameterSource p = window(day, lineId);
-        long[] done = new long[24];
-        jdbc.query("SELECT EXTRACT(HOUR FROM inspected_at) AS h, COUNT(*) AS c FROM inspection_result"
-                + " WHERE result = 'OK' AND inspected_at >= :from AND inspected_at < :to" + lineFilter(lineId, "line_id")
-                + " GROUP BY EXTRACT(HOUR FROM inspected_at)", p, rs -> { done[rs.getInt("h")] = rs.getLong("c"); });
-        Integer target = jdbc.queryForObject("SELECT SUM(target_qty) FROM production_target WHERE target_date = :day"
-                + lineFilter(lineId, "line_id"), p.addValue("day", day), Integer.class);
-
-        int last = day.isAfter(today) ? -1 : day.equals(today) ? Kst.now().getHour() : 23;
-        List<HourlyResponse.Hour> hours = new ArrayList<>();
-        long cumulative = 0;
-        for (int h = 0; h <= last; h++) {
-            cumulative += done[h];
-            // 계획은 하루 24시간에 고르게 나눠요 (프론트 목업과 같은 계획선)
-            hours.add(new HourlyResponse.Hour(h, done[h], cumulative, target == null ? null : Math.round(target * (h + 1) / 24.0)));
-        }
-        return new HourlyResponse(day, lineId, target, hours);
     }
 
     /** M-15. 설비별 그날 처리 행 수와 평균 CT(첫 행~마지막 행 간격 ÷ (행 수 − 1)) */

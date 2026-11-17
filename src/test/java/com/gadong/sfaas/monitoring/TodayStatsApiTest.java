@@ -14,7 +14,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-/** M-14 시간대별 출고 양품, M-15 설비별 사이클 수·평균 CT */
+/** M-15 설비별 사이클 수·평균 CT, M-03 프레스 단별 그래프, M-13 도장 설비별 재공 */
 @SpringBootTest
 @WithMockUser(username = "testuser", roles = "MANAGER") // API는 로그인 필요 (SecurityConfig)
 @AutoConfigureMockMvc
@@ -44,24 +44,6 @@ class TodayStatsApiTest {
                         + "('A-PR1','2026-11-10 09:00:34',277,null,null,null)",
                 "insert into welding_data(equipment_id, measured_at, current) values "
                         + "('A-WD','2026-11-10 09:00:00',15.0), ('A-WD','2026-11-10 09:00:20',15.0), ('A-WD','2026-11-10 09:00:40',15.0)");
-    }
-
-    @Test
-    void hourly_cumulativeOkWithPlanLine() throws Exception {
-        mvc.perform(get("/api/production/hourly").param("date", DAY).param("lineId", "A"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.target").value(240))
-                .andExpect(jsonPath("$.hours.length()").value(24)) // 지난 날은 0~23시
-                .andExpect(jsonPath("$.hours[9].done").value(2)) // NG는 빼요
-                .andExpect(jsonPath("$.hours[9].planCumulative").value(100)) // 240 × 10 ÷ 24
-                .andExpect(jsonPath("$.hours[11].done").value(1))
-                .andExpect(jsonPath("$.hours[23].cumulative").value(3));
-        mvc.perform(get("/api/production/hourly").param("date", DAY)) // 공장 전체, 계획은 라인 합
-                .andExpect(jsonPath("$.hours[23].cumulative").value(4))
-                .andExpect(jsonPath("$.target").value(240));
-        mvc.perform(get("/api/production/hourly").param("date", "2026-11-11").param("lineId", "B"))
-                .andExpect(jsonPath("$.target").doesNotExist())
-                .andExpect(jsonPath("$.hours[0].planCumulative").doesNotExist());
     }
 
     @Test

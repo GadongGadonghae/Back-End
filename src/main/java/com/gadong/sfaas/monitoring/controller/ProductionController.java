@@ -3,7 +3,6 @@ package com.gadong.sfaas.monitoring.controller;
 import com.gadong.sfaas.global.response.PageResponse;
 import com.gadong.sfaas.monitoring.dto.MonitoringDtos.*;
 import com.gadong.sfaas.monitoring.service.MonitoringService;
-import com.gadong.sfaas.monitoring.service.TodayStats;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,20 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProductionController {
 
     private final MonitoringService service;
-    private final TodayStats todayStats;
 
-    public ProductionController(MonitoringService service, TodayStats todayStats) {
+    public ProductionController(MonitoringService service) {
         this.service = service;
-        this.todayStats = todayStats;
-    }
-
-    @Operation(summary = "M-14 시간대별 출고 양품 (대시보드·라인 상세 그래프)",
-            description = "done = 그 시간의 검사 OK(M-07 ok 기준). date 생략 시 오늘이고 지금 시각까지만 줘요. "
-                    + "planCumulative = 그날 계획(G-03) × (hour+1) ÷ 24, 계획이 없으면 null")
-    @GetMapping("/production/hourly")
-    public HourlyResponse hourly(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
-                                 @RequestParam(required = false) String lineId) {
-        return todayStats.hourly(date, lineId);
     }
 
     @Operation(summary = "M-07 출고 양품/불량 카운트",
