@@ -142,6 +142,24 @@ public class ProductionStats {
         return wip;
     }
 
+    /**
+     * M-13 paintId: 도장 설비 하나의 앞·뒤 재공 (판정 설계 v2 2절).
+     * 앞 = 지금 이 도장으로 가는 라인들의 용접→도장 재공 합, 뒤 = 이 도장 OK 수 − 이 도장을 거친 검사 행 수
+     */
+    public List<WipResponse> paintWip(String paintId) {
+        if (!"PAINTING".equals(masterService.equipment(paintId).getProcessId())) throw invalid(paintId + "는 도장 설비가 아닙니다");
+        MapSqlParameterSource p = new MapSqlParameterSource("paintId", paintId);
+        long before = 0;
+        for (String line : jdbc.queryForList("SELECT line_id FROM line WHERE current_paint_id = :paintId", p, String.class)) {
+            before += wip(line).stream().filter(w -> "WELDING".equals(w.process())).mapToLong(WipResponse::wipQty).sum();
+        }
+        long paintOk = count("SELECT COUNT(*), COALESCE(SUM(CASE WHEN x.result = 'OK' THEN 1 ELSE 0 END), 0)"
+                + " FROM painting_data x WHERE x.equipment_id = :paintId", p)[1];
+        long inspected = jdbc.queryForObject("SELECT COUNT(*) FROM inspection_result WHERE paint_equipment_id = :paintId", p, Long.class);
+        return List.of(new WipResponse("WELDING", "PAINTING", (int) before),
+                new WipResponse("PAINTING", "INSPECTION", (int) Math.max(0, paintOk - inspected)));
+    }
+
     private static String lineFilter(String lineId, String column) {
         return lineId == null ? "" : " AND " + column + " = :lineId"; // column은 코드에 적힌 값만 와요
     }

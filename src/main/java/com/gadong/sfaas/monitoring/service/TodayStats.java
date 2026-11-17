@@ -20,9 +20,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 @Transactional(readOnly = true)
 public class TodayStats {
-    /** 프레스 1행 = 제품 1개. PR1→PR4가 차례로 한 칸씩 채워요 (판정 설계 v2 1-1) */
-    private static final List<String> PRESS_STAGES = List.of("pressure_left", "pressure_right", "pressure_diff", "press_time");
-
     private final NamedParameterJdbcTemplate jdbc;
     private final MasterService masterService;
 
@@ -70,8 +67,8 @@ public class TodayStats {
         // 프레스는 행이 제품 단위라 단(PR1~PR4)마다 자기 칸이 채워진 행 수를 세요.
         // shortcut: 행에 단별 시각이 없어 CT는 라인의 제품 간격이라 네 단이 같아요(가장 느린 단은 못 가려요). 단별 시각 컬럼이 생기면 그걸로 나눠요
         List<CycleResponse> out = new ArrayList<>();
-        for (int s = 0; s < PRESS_STAGES.size(); s++) {
-            String col = PRESS_STAGES.get(s);
+        for (int s = 0; s < ProcessData.PRESS_STAGES.size(); s++) {
+            String col = ProcessData.PRESS_STAGES.get(s);
             String stage = "-PR" + (s + 1);
             out.addAll(jdbc.query("SELECT e.line_id AS line, COUNT(*) AS c, MIN(x.measured_at) AS a, MAX(x.measured_at) AS b"
                     + " FROM press_data x JOIN equipment e ON e.equipment_id = x.equipment_id"
