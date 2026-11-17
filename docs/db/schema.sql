@@ -1,10 +1,37 @@
 -- =====================================================================
 -- 라인 가동 현황 모니터링 시스템 · DB 스키마 (PostgreSQL)
--- 1조 가동가동해 · 작성 2026-11-16 · v0.3.2
+-- 1조 가동가동해 · 작성 2026-11-17 · v0.3.7
 --
 -- 실행 방법:  psql -U postgres -d sfaas -f schema.sql
 -- 이 파일이 DB 구조의 "정답지"예요. 테이블을 바꿀 땐 이 파일을 고치고 GitHub에 올려요.
 -- 백엔드 JPA 설정은 spring.jpa.hibernate.ddl-auto=validate 로 맞춰주세요.
+--
+-- ★ 현재 처리 시간 (v0.3.7, seed.sql): 슬리팅 16 · 프레스 17 (1대당, 라인에 4대) · 용접 17 · 도장 4 · 비전 검사 7초
+--   라인 박자 18초. 비전 검사기가 병목이라 검사 앞에 재공이 쌓여요. 아래 버전별 기록의 처리 시간은 그때 값이에요.
+--
+-- v0.3.7 변경 (11/17): 프레스를 1대당 17초로 바로잡음 (v0.3.6의 "4대 합쳐 17초"는 잘못 전달된 값)
+--
+-- v0.3.6 변경 (11/17 처리 시간 재조정, seed.sql만 바뀜)
+--   · [지난 값] 프레스 4대 합쳐 17초(1대당 4.25초) · 도장 4초 · 비전 검사 7초
+--
+-- v0.3.5 변경 (11/17 아키텍처 확정: Node-RED가 DB에 원시 값 저장 → 백엔드가 조회해서 판정·저장)
+--   · equipment_signal 추가: Node-RED가 설비 상태 신호(heartbeat)·고장 신호를 설비마다 1줄로 덮어씀
+--     → 백엔드가 last_seen_at으로 DC(10초 이상 끊김), fault로 D를 판정
+--   · [지난 값] 처리 시간: 슬리팅 16 · 프레스 17 ×4 · 용접 17 · 도장 2 · 검사 3초
+--   · 측정값 result는 Node-RED가 비워서 저장하고 백엔드가 판정해서 채움 (기존 구조 그대로)
+--
+-- v0.3.4 변경 (11/17 팀 결정)
+--   · reassignment_report 승인 칸 복구 (재배정을 할 수도 있어서 칸만 두고 비워 둠)
+--   · coil_receipt.product_qty 추가: 코일 1롤 = 제품 20개 → 입고→슬리팅 재공품 계산에 포함
+--   · chat_message 테이블 추가 (H-01·H-02, 개발은 후순위)
+--   · 상태 판정 규칙: 설비가 생존 신호(heartbeat)를 주기적으로 보냄 (v0.3.5: Node-RED가 equipment_signal에 기록) → DC = 생존 신호 10초 이상 끊김,
+--     I = 생존 신호는 오는데 처리할 제품이 없음 (재공 0). 생존 신호는 판정에만 쓰고 DB에 저장하지 않음
+--
+-- v0.3.3 변경 (11/17 백엔드 피드백 3차)
+--   · reassignment_report의 승인 칸(approved, approved_by, approved_at) 삭제 → 계획서 작성까지만
+--   · [지난 값] 공용 설비 처리 시간: 도장 2→1초, 검사 2→0.5초
+--   · 규칙 주석 정리: DC=가동, I(대기)=설비 정상인데 처리할 제품 없음, COIL은 재공 계산에서 제외
+--   · DB에 넣지 않기로 한 것: equipment.dataSource(공정으로 알 수 있음), 채팅 테이블(P3)
 --
 -- v0.3.2 변경 (11/16 백엔드 피드백 2차)
 --   · 설비 표시명을 API 형식으로 (seed.sql): 'A라인 프레스 1호기', '도장 1호기', '비전 검사 1호기'
@@ -27,7 +54,7 @@
 
 -- 다시 실행해도 되도록 기존 테이블을 지우고 새로 만들어요. (데이터도 같이 지워짐!)
 DROP TABLE IF EXISTS inspection, status_log, downtime,   -- v0.3까지의 예전 이름
-    alarm, paint_route_history,
+    equipment_signal, chat_message, alarm, paint_route_history,
     reassignment_detail, reassignment_report, downtime_event, equipment_status_history,
     inspection_result, painting_data, welding_data, press_data, slitting_data, coil_receipt,
     production_target, threshold, users, downtime_code, equipment, line, process CASCADE;
@@ -47,7 +74,7 @@ CREATE TABLE process (
 );
 
 -- 라인: A~F (6개)
--- 라인 생산 능력 = 라인 안에서 가장 느린 공정 기준 (예: 프레스 3초 → 시간당 1,200개)
+-- 라인 생산 능력 = 라인 안에서 가장 느린 공정 기준 (프레스·용접 17초 → 시간당 약 211개)
 CREATE TABLE line (
     line_id           VARCHAR(5)  PRIMARY KEY,      -- 'A' ~ 'F'
     line_name         VARCHAR(20) NOT NULL,         -- 'A라인'
@@ -134,9 +161,11 @@ CREATE TABLE production_target (
 -- 코일 입고 (설비 없음, 가상 데이터)
 CREATE TABLE coil_receipt (
     receipt_id   BIGSERIAL   PRIMARY KEY,
-    material_id  VARCHAR(30) NOT NULL,              -- 원자재 제품ID
-    received_at  TIMESTAMP   NOT NULL               -- 입고시각
+    material_id  VARCHAR(30) NOT NULL,              -- 원자재 제품ID (한 줄 = 코일 1롤)
+    received_at  TIMESTAMP   NOT NULL,              -- 입고시각
+    product_qty  INTEGER     NOT NULL DEFAULT 20 CHECK (product_qty > 0)  -- 이 코일 1롤로 만들 수 있는 제품 수 (11/17: 1롤 = 20개)
 );
+-- 입고→슬리팅 재공품 = 입고된 코일의 product_qty 합 − 슬리팅 처리 수 (공장 전체 기준. 코일은 라인 구분 없음)
 
 -- 슬리팅 (실습 모터·인버터 PLC) ※ PLC 확정 후 컬럼 수정 예정
 CREATE TABLE slitting_data (
@@ -216,6 +245,8 @@ CREATE INDEX idx_coil_time        ON coil_receipt  (received_at);
 -- 상태 이력: 설비 상태가 바뀔 때마다 한 줄. 끝나지 않은 구간은 ended_at = NULL
 -- R 가동 · S 정지(계획) · I 대기 · D 고장/알람 · DC 통신 끊김
 -- ※ DC는 설비가 돌고 있을 수 있어서 가동률 계산에서는 "가동(R)"으로 봐요 (11/16 결정)
+-- ※ I(대기) = 설비는 정상(생존 신호 수신 중)인데 처리할 제품이 없음 (재공 0). 슬리터는 runCoil = 0 (11/17)
+-- ※ DC = 생존 신호(heartbeat)가 10초 이상 끊김. I가 오래 이어져도 DC가 되지 않아요
 -- ※ 계획정지(S) 시간 안에서 난 고장은 손실로 세지 않아요 (11/16 결정)
 CREATE TABLE equipment_status_history (
     log_id        BIGSERIAL   PRIMARY KEY,
@@ -277,6 +308,15 @@ CREATE TABLE alarm (
 CREATE INDEX idx_alarm_eq_time ON alarm (equipment_id, raised_at);
 CREATE INDEX idx_alarm_active  ON alarm (raised_at) WHERE cleared_at IS NULL;  -- 활성 알람 조회용
 
+-- 설비 신호 (v0.3.5): 설비마다 1줄. Node-RED가 상태 신호(1초마다)·고장 신호를 받을 때마다 덮어써요 (UPSERT)
+-- 백엔드 판정: now() - last_seen_at > 10초 → DC, fault = 1 → D. 이력은 남기지 않음 (상태 변화는 equipment_status_history에)
+CREATE TABLE equipment_signal (
+    equipment_id  VARCHAR(20) PRIMARY KEY REFERENCES equipment(equipment_id),
+    last_seen_at  TIMESTAMP   NOT NULL,             -- 마지막 상태 신호 받은 시각
+    fault         SMALLINT    NOT NULL DEFAULT 0 CHECK (fault IN (0, 1)),  -- 고장 신호 0 정상 / 1 고장
+    updated_at    TIMESTAMP   NOT NULL DEFAULT now()
+);
+
 -- 도장 경로 전환 이력 (M-09): 라인이 쓰는 도장 설비를 바꾼 기록
 CREATE TABLE paint_route_history (
     history_id     BIGSERIAL    PRIMARY KEY,
@@ -290,13 +330,13 @@ CREATE TABLE paint_route_history (
 CREATE INDEX idx_paint_route_line_time ON paint_route_history (line_id, changed_at);
 
 -- 재배정 계획서 (SCR-007): 정지 30분 이상 → 손실 수량 → 여유 라인 추천
--- ※ 실제 재배정은 하지 않고 계획서 작성까지만 (11/16 결정)
+-- ※ 지금은 계획서 작성까지만. 재배정을 할 수도 있어서 승인 칸은 두고 비워 둠 (v0.3.4)
 CREATE TABLE reassignment_report (
     report_id     BIGSERIAL   PRIMARY KEY,
     downtime_id   BIGINT      NOT NULL REFERENCES downtime_event(downtime_id),
     loss_qty      INTEGER     NOT NULL,             -- 손실 수량 = 정지 시간 × 라인 시간당 생산 능력
     created_at    TIMESTAMP   NOT NULL DEFAULT now(),
-    approved      BOOLEAN     NOT NULL DEFAULT FALSE,
+    approved      BOOLEAN     NOT NULL DEFAULT FALSE,   -- 관리자 승인 여부 (지금은 안 씀)
     approved_by   INTEGER     REFERENCES users(user_id),
     approved_at   TIMESTAMP
 );
@@ -309,3 +349,17 @@ CREATE TABLE reassignment_detail (
     added_qty       INTEGER    NOT NULL,            -- 추가 배정 수량
     PRIMARY KEY (report_id, line_id)
 );
+
+
+-- =====================================================================
+-- ⑤ 기타
+-- =====================================================================
+
+-- 채팅 (H-01 목록, H-02 전송): 공장 전체 채팅방 1개. 개발은 후순위(P3)
+CREATE TABLE chat_message (
+    message_id  BIGSERIAL     PRIMARY KEY,
+    sender_id   INTEGER       NOT NULL REFERENCES users(user_id),  -- 보낸 사람 (화면에는 users.user_name)
+    content     VARCHAR(1000) NOT NULL,                            -- 메시지 내용
+    sent_at     TIMESTAMP     NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_chat_sent ON chat_message (sent_at);

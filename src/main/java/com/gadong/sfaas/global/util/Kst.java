@@ -32,6 +32,11 @@ public final class Kst {
         throw new IllegalArgumentException("시간 값이 아니에요: " + jdbcValue.getClass());
     }
 
+    /** 요청으로 받은 시각(+09:00 등)을 DB에 저장하는 KST 시각으로 바꿔요 */
+    public static LocalDateTime local(OffsetDateTime t) {
+        return t.atZoneSameInstant(ZONE).toLocalDateTime();
+    }
+
     /** 기간 조회 from(포함)의 시작 시각 */
     public static LocalDateTime start(LocalDate from) {
         return from.atStartOfDay();

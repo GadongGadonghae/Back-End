@@ -19,12 +19,12 @@ import com.gadong.sfaas.master.repository.PaintRouteHistoryRepository;
 import com.gadong.sfaas.master.repository.ProcessRepository;
 import com.gadong.sfaas.master.repository.ThresholdRepository;
 import com.gadong.sfaas.master.service.MasterService;
+import com.gadong.sfaas.master.service.UserLookup;
 import com.gadong.sfaas.monitoring.dto.MonitoringDtos.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -43,14 +43,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 모니터링 화면 API 서비스. 조회는 여러 테이블을 묶어야 해서 SQL(JdbcTemplate)로, 수정은 엔티티로 해요.
- *
- * <p>TODO(BE1): M-07, M-13은 집계 기준이 정해지지 않아 아직 명세 예시 값을 돌려주는 stub이에요.
  */
 @Service
 @Transactional(readOnly = true)
 public class MonitoringService {
 
-    private static final OffsetDateTime T0 = OffsetDateTime.parse("2026-11-18T09:30:00+09:00");
     private static final List<String> RSID = List.of("R", "S", "I", "D", "DC");
 
     private final NamedParameterJdbcTemplate jdbc;
@@ -60,10 +57,13 @@ public class MonitoringService {
     private final ThresholdRepository thresholdRepository;
     private final AlarmRepository alarmRepository;
     private final PaintRouteHistoryRepository paintRouteHistoryRepository;
+    private final UserLookup users;
+    private final ProductionStats productionStats;
 
     public MonitoringService(NamedParameterJdbcTemplate jdbc, MasterService masterService, LineRepository lineRepository,
                              ProcessRepository processRepository, ThresholdRepository thresholdRepository,
-                             AlarmRepository alarmRepository, PaintRouteHistoryRepository paintRouteHistoryRepository) {
+                             AlarmRepository alarmRepository, PaintRouteHistoryRepository paintRouteHistoryRepository,
+                             UserLookup users, ProductionStats productionStats) {
         this.jdbc = jdbc;
         this.masterService = masterService;
         this.lineRepository = lineRepository;
@@ -71,6 +71,8 @@ public class MonitoringService {
         this.thresholdRepository = thresholdRepository;
         this.alarmRepository = alarmRepository;
         this.paintRouteHistoryRepository = paintRouteHistoryRepository;
+        this.users = users;
+        this.productionStats = productionStats;
     }
 
     /** M-01 */
@@ -122,19 +124,22 @@ public class MonitoringService {
         return new MetricsResponse(equipmentId, series);
     }
 
+    private static final String ALARM_COLUMNS = "a.alarm_id, a.equipment_id, a.item_name, a.measured_value, a.lower_limit,"
+            + " a.upper_limit, a.level, a.message, a.raised_at, a.cleared_at, a.acked_at";
+
     /** M-04 */
     public List<AlarmResponse> activeAlarms(String lineId) {
         masterService.requireLine(lineId);
         MapSqlParameterSource p = new MapSqlParameterSource();
-        StringBuilder sql = new StringBuilder("SELECT a.alarm_id, a.equipment_id, a.level, a.message, a.raised_at FROM alarm a"
+        StringBuilder sql = new StringBuilder("SELECT " + ALARM_COLUMNS + " FROM alarm a"
                 + " JOIN equipment e ON e.equipment_id = a.equipment_id WHERE a.cleared_at IS NULL");
-        if (lineId != null) {
-            sql.append(" AND e.line_id = :lineId");
-            p.addValue("lineId", lineId);
-        }
+        Sql.eq(sql, p, "e.line_id", "lineId", lineId);
         sql.append(" ORDER BY a.raised_at DESC, a.alarm_id DESC");
         return jdbc.query(sql.toString(), p, (rs, n) -> new AlarmResponse(rs.getLong("alarm_id"), rs.getString("equipment_id"),
-                rs.getString("level"), rs.getString("message"), Kst.of(rs.getObject("raised_at", LocalDateTime.class))));
+                itemName(rs.getString("item_name")), toDouble(rs.getBigDecimal("measured_value")),
+                toDouble(rs.getBigDecimal("lower_limit")), toDouble(rs.getBigDecimal("upper_limit")), rs.getString("level"),
+                rs.getString("message"), Kst.of(rs.getObject("raised_at", LocalDateTime.class)),
+                Kst.of(rs.getObject("cleared_at", LocalDateTime.class))));
     }
 
     /** M-05 */
@@ -143,29 +148,29 @@ public class MonitoringService {
         Checks.page(page, size);
         if (equipmentId != null) masterService.equipment(equipmentId);
         MapSqlParameterSource p = Sql.period(from, to);
-        String where = " FROM alarm WHERE raised_at >= :from AND raised_at < :to";
-        if (equipmentId != null) {
-            where += " AND equipment_id = :eq";
-            p.addValue("eq", equipmentId);
-        }
+        StringBuilder where = new StringBuilder(" FROM alarm a WHERE a.raised_at >= :from AND a.raised_at < :to");
+        Sql.eq(where, p, "a.equipment_id", "eq", equipmentId);
         long total = jdbc.queryForObject("SELECT COUNT(*)" + where, p, Long.class);
         List<AlarmHistoryResponse> content = jdbc.query(
-                "SELECT alarm_id, equipment_id, level, message, raised_at, acked_at" + where
-                        + " ORDER BY raised_at DESC, alarm_id DESC LIMIT :limit OFFSET :offset", Sql.paging(p, page, size),
+                "SELECT " + ALARM_COLUMNS + where + " ORDER BY a.raised_at DESC, a.alarm_id DESC LIMIT :limit OFFSET :offset",
+                Sql.paging(p, page, size),
                 (rs, n) -> new AlarmHistoryResponse(rs.getLong("alarm_id"), rs.getString("equipment_id"), rs.getString("level"),
-                        rs.getString("message"), Kst.of(rs.getObject("raised_at", LocalDateTime.class)),
+                        rs.getString("message"), itemName(rs.getString("item_name")), toDouble(rs.getBigDecimal("measured_value")),
+                        toDouble(rs.getBigDecimal("lower_limit")), toDouble(rs.getBigDecimal("upper_limit")),
+                        Kst.of(rs.getObject("raised_at", LocalDateTime.class)), Kst.of(rs.getObject("cleared_at", LocalDateTime.class)),
                         Kst.of(rs.getObject("acked_at", LocalDateTime.class))));
         return new PageResponse<>(content, total);
     }
 
-    /** M-06. 이미 확인한 알람은 처음 확인 시각을 돌려줘요 */
+    /** M-06. 이미 확인한 알람은 처음 확인한 사람·시각을 돌려줘요 */
     @Transactional
     public AckResponse ack(long alarmId, AckRequest request) {
+        if (request == null || request.ackUserId() == null) throw invalid("ackUserId가 필요합니다");
+        if (!users.exists(request.ackUserId())) throw invalid("사용자 " + request.ackUserId() + "를 찾을 수 없습니다");
         Alarm alarm = alarmRepository.findById(alarmId).orElseThrow(() ->
                 new BusinessException(ErrorCode.ALARM_NOT_FOUND, "알람 " + alarmId + "를 찾을 수 없습니다"));
-        // TODO(BE2 연동): 확인한 사람(acked_by, users FK)은 요청의 ackBy가 아니라 JWT 로그인 사용자로 채워요
-        alarm.ack(Kst.now());
-        return new AckResponse(alarmId, Kst.of(alarm.getAckedAt()));
+        alarm.ack(request.ackUserId(), Kst.now());
+        return new AckResponse(alarmId, alarm.getAckedBy(), Kst.of(alarm.getAckedAt()));
     }
 
     /** M-10: 기준치는 설비별이라 equipmentId로 좁힐 수 있어요 */
@@ -195,11 +200,9 @@ public class MonitoringService {
         return new ThresholdUpdateResponse(id, request.low(), request.high(), Kst.of(threshold.getUpdatedAt()));
     }
 
-    /** M-07 (stub) */
+    /** M-07 */
     public ProductionCountsResponse counts(LocalDate date, String lineId, String groupBy) {
-        return new ProductionCountsResponse("2026-11-18", 1200, 30, 1170, 28, 1142, 95.2,
-                List.of(new ProductionCountsResponse.GroupCount("A", 210, 201, 9)),
-                List.of(new ProductionCountsResponse.ProcessCount("PRESS", 1215, 12)));
+        return productionStats.counts(date, lineId, groupBy);
     }
 
     /** M-08 */
@@ -216,9 +219,9 @@ public class MonitoringService {
         Sql.eq(where, p, "result", "result", result);
         long total = jdbc.queryForObject("SELECT COUNT(*)" + where, p, Long.class);
         List<InspectionResponse> content = jdbc.query(
-                "SELECT inspection_id, line_id, paint_equipment_id, result, inspected_at" + where
+                "SELECT inspection_id, product_id, line_id, paint_equipment_id, result, inspected_at" + where
                         + " ORDER BY inspected_at DESC, inspection_id DESC LIMIT :limit OFFSET :offset", Sql.paging(p, page, size),
-                (rs, n) -> new InspectionResponse(rs.getLong("inspection_id"), rs.getString("line_id"),
+                (rs, n) -> new InspectionResponse(rs.getLong("inspection_id"), rs.getString("product_id"), rs.getString("line_id"),
                         rs.getString("paint_equipment_id"), rs.getString("result"),
                         Kst.of(rs.getObject("inspected_at", LocalDateTime.class))));
         return new PageResponse<>(content, total);
@@ -251,9 +254,9 @@ public class MonitoringService {
         return equipmentStatuses(lineId, code);
     }
 
-    /** M-13 (stub) */
+    /** M-13 */
     public List<WipResponse> wip(String lineId) {
-        return List.of(new WipResponse("PRESS", "WELDING", 42));
+        return productionStats.wip(lineId);
     }
 
     /** E-01. 공정별 테이블에서 각각 최신순으로 필요한 만큼만 읽고 합쳐서 페이지를 나눠요 */
@@ -365,6 +368,11 @@ public class MonitoringService {
                 Instant.ofEpochSecond(bucket * 5).atOffset(Kst.OFFSET), b[0] / b[1],
                 b[3] == 0 ? null : b[2] == 1 ? "NG" : "OK")));
         return points;
+    }
+
+    /** 알람의 item_name(pressure_total)을 응답 이름(pressureTotal)으로. 고장 신호 알람은 항목이 없어요 */
+    private static String itemName(String column) {
+        return column == null ? null : ProcessData.camel(column);
     }
 
     private static Double toDouble(BigDecimal v) {

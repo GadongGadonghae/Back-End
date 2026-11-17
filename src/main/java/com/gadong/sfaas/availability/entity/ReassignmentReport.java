@@ -14,12 +14,4 @@ public class ReassignmentReport {
     @Column(name = "approved") private Boolean approved;
     @Column(name = "approved_by") private Integer approvedBy;
     @Column(name = "approved_at") private LocalDateTime approvedAt;
-
-    /** R-03. 이미 승인된 보고서는 처음 승인 기록을 유지해요 */
-    public void approve(Integer userId, LocalDateTime at) {
-        if (Boolean.TRUE.equals(approved)) return;
-        this.approved = true;
-        this.approvedBy = userId;
-        this.approvedAt = at;
-    }
 }

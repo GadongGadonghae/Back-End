@@ -1,15 +1,16 @@
 package com.gadong.sfaas.availability.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
-/** 가동률 화면 API 응답·요청 (API 명세서 v2: U-01 ~ U-12) */
+/** 가동률 화면 API 응답·요청 (API 명세서 v3: U-01 ~ U-12) */
 public final class AvailabilityDtos {
     private AvailabilityDtos() {}
 
-    /** U-01. 시간당 생산 능력이 미정이라 performance, oee, lossQty 는 당분간 null */
+    /** U-01. 처리한 제품이 없어 속도가동률을 못 구하면 performance, oee 는 null */
     public record SummaryResponse(double target, double actual, Double oee, double availability, Double performance,
                                   double quality, long plannedMin, long unplannedStopMin, Long lossQty) {}
 
@@ -37,7 +38,8 @@ public final class AvailabilityDtos {
     /** U-08 */
     public record DowntimeEventResponse(long eventId, String lineId, String equipmentId, String process, String status,
                                         String reasonCode, OffsetDateTime startAt, OffsetDateTime endAt, long minutes,
-                                        boolean inProgress, Integer actionUserId, String actionUserName, String memo) {}
+                                        boolean inProgress, String detail, Integer actionUserId, String actionUserName,
+                                        OffsetDateTime actionAt, String memo) {}
 
     /** U-09: 조치 담당자는 이름이 아니라 번호(동명이인 대비). 응답에 이름을 붙여요 */
     public record DowntimeEventUpdateRequest(String reasonCode, String memo, Integer actionUserId) {}
@@ -48,7 +50,8 @@ public final class AvailabilityDtos {
     public record DowntimeTopResponse(String equipmentId, long totalMin, int count) {}
 
     /** U-11 */
-    public record YieldResponse(String period, int total, int good, double yieldRate) {}
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record YieldResponse(String period, String key, int total, int good, double yieldRate) {}
 
     /** U-12 */
     public record StatusSegmentResponse(String status, OffsetDateTime startAt, OffsetDateTime endAt, String reasonCode) {}

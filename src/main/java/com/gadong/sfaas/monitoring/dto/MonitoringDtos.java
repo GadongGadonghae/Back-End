@@ -6,7 +6,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
-/** 모니터링 화면 API 응답·요청 (API 명세서 v2: M-01 ~ M-13, E-01) */
+/** 모니터링 화면 API 응답·요청 (API 명세서 v3: M-01 ~ M-13, E-01) */
 public final class MonitoringDtos {
     private MonitoringDtos() {}
 
@@ -29,17 +29,19 @@ public final class MonitoringDtos {
         public record Point(OffsetDateTime ts, double value, String result) {}
     }
 
-    /** M-04 · W-02 */
-    public record AlarmResponse(long alarmId, String equipmentId, String level, String message, OffsetDateTime occurredAt) {}
+    /** M-04 · W-02. itemName은 벗어난 항목(고장 신호면 null), 값·기준은 알람 순간의 기록이에요 */
+    public record AlarmResponse(long alarmId, String equipmentId, String itemName, Double measuredValue, Double lowerLimit,
+                                Double upperLimit, String level, String message, OffsetDateTime occurredAt, OffsetDateTime clearedAt) {}
 
     /** M-05: M-04 필드 + 확인 시각 */
-    public record AlarmHistoryResponse(long alarmId, String equipmentId, String level, String message,
-                                       OffsetDateTime occurredAt, OffsetDateTime ackedAt) {}
+    public record AlarmHistoryResponse(long alarmId, String equipmentId, String level, String message, String itemName,
+                                       Double measuredValue, Double lowerLimit, Double upperLimit, OffsetDateTime occurredAt,
+                                       OffsetDateTime clearedAt, OffsetDateTime ackedAt) {}
 
     /** M-06 */
-    public record AckRequest(String ackBy) {}
+    public record AckRequest(Integer ackUserId) {}
 
-    public record AckResponse(long alarmId, OffsetDateTime ackedAt) {}
+    public record AckResponse(long alarmId, Integer ackUserId, OffsetDateTime ackedAt) {}
 
     /** M-10 */
     public record ThresholdResponse(int id, String equipmentId, String process, String metric, Double low, Double high) {}
@@ -57,7 +59,7 @@ public final class MonitoringDtos {
     }
 
     /** M-08 */
-    public record InspectionResponse(long inspectionId, String lineId, String paintId, String result, OffsetDateTime inspectedAt) {}
+    public record InspectionResponse(long inspectionId, String productId, String lineId, String paintId, String result, OffsetDateTime inspectedAt) {}
 
     /** M-09 */
     public record PaintRouteRequest(String paintId, String reason) {}

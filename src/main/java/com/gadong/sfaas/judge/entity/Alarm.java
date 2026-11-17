@@ -22,8 +22,10 @@ public class Alarm {
     @Column(name = "acked_by") private Integer ackedBy;
     @Column(name = "acked_at") private LocalDateTime ackedAt;
 
-    /** 이미 확인된 알람은 처음 확인 시각을 유지해요 */
-    public void ack(LocalDateTime at) {
-        if (ackedAt == null) ackedAt = at;
+    /** 이미 확인된 알람은 처음 확인한 사람·시각을 유지해요 */
+    public void ack(Integer userId, LocalDateTime at) {
+        if (ackedAt != null) return;
+        ackedBy = userId;
+        ackedAt = at;
     }
 }

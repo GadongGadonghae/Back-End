@@ -51,9 +51,10 @@ class MonitoringApiTest {
                 "insert into threshold(threshold_id, equipment_id, item_name, item_label, unit, lower_limit, upper_limit, updated_at) values "
                         + "(3,'A-PR1','pressure_left','좌 압력','bar',270,285.3,'2026-11-01 00:00:00'), "
                         + "(4,'PT1','ph','pH',null,1.51,5.18,'2026-11-01 00:00:00')",
-                "insert into alarm(alarm_id, equipment_id, level, message, raised_at, cleared_at, acked_at) values "
-                        + "(381,'A-PR1','CRITICAL','좌 압력 상한 초과','2026-11-10 09:10:00',null,null), "
-                        + "(382,'B-PR1','WARNING','압력 합계 하한 미달','2026-11-10 09:15:00','2026-11-10 09:18:00','2026-11-10 09:20:00')",
+                "insert into users(user_id, login_id, password_hash, user_name, role) values (1,'u1','x','김정비','OPERATOR')",
+                "insert into alarm(alarm_id, equipment_id, item_name, measured_value, lower_limit, upper_limit, level, message, raised_at, cleared_at, acked_by, acked_at) values "
+                        + "(381,'A-PR1','pressure_left',287.1,270,285.3,'CRITICAL','좌 압력 상한 초과','2026-11-10 09:10:00',null,null,null), "
+                        + "(382,'B-PR1',null,null,null,null,'WARNING','고장 신호','2026-11-10 09:15:00','2026-11-10 09:18:00',1,'2026-11-10 09:20:00')",
                 "insert into inspection_result(inspection_id, equipment_id, product_id, line_id, paint_equipment_id, result, inspected_at) values "
                         + "(9001,'VI','P-1','A','PT1','OK','2026-11-10 09:30:00'), (9002,'VI','P-2','B','PT1','NG','2026-11-10 09:31:00')");
     }
@@ -120,17 +121,30 @@ class MonitoringApiTest {
         mvc.perform(get("/api/v1/alarms/active").param("lineId", "A"))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].alarmId").value(381))
+                .andExpect(jsonPath("$[0].itemName").value("pressureLeft"))
+                .andExpect(jsonPath("$[0].measuredValue").value(287.1))
+                .andExpect(jsonPath("$[0].lowerLimit").value(270.0))
+                .andExpect(jsonPath("$[0].upperLimit").value(285.3))
+                .andExpect(jsonPath("$[0].clearedAt").isEmpty())
                 .andExpect(jsonPath("$[0].occurredAt").value("2026-11-10T09:10:00+09:00"));
         mvc.perform(get("/api/v1/alarms").param("from", DAY).param("to", DAY).param("page", "1").param("size", "1"))
                 .andExpect(jsonPath("$.totalElements").value(2))
                 .andExpect(jsonPath("$.content[0].alarmId").value(381))
                 .andExpect(jsonPath("$.content[0].ackedAt").isEmpty());
-        mvc.perform(patch("/api/v1/alarms/381/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackBy\":\"admin\"}"))
+        mvc.perform(get("/api/v1/alarms").param("from", DAY).param("to", DAY).param("equipmentId", "B-PR1"))
+                .andExpect(jsonPath("$.content[0].itemName").isEmpty()) // 고장 신호 알람은 항목이 없어요
+                .andExpect(jsonPath("$.content[0].clearedAt").value("2026-11-10T09:18:00+09:00"));
+        mvc.perform(patch("/api/v1/alarms/381/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ackUserId").value(1))
                 .andExpect(jsonPath("$.ackedAt").exists());
-        mvc.perform(patch("/api/v1/alarms/382/ack"))
+        mvc.perform(patch("/api/v1/alarms/382/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
                 .andExpect(jsonPath("$.ackedAt").value("2026-11-10T09:20:00+09:00")); // 이미 확인된 알람은 그대로
-        mvc.perform(patch("/api/v1/alarms/999/ack"))
+        mvc.perform(patch("/api/v1/alarms/381/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":999}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(patch("/api/v1/alarms/381/ack"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(patch("/api/v1/alarms/999/ack").contentType(MediaType.APPLICATION_JSON).content("{\"ackUserId\":1}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("ALARM_NOT_FOUND"));
     }
@@ -139,7 +153,8 @@ class MonitoringApiTest {
     void m08InspectionsFilterAndPage() throws Exception {
         mvc.perform(get("/api/v1/inspections").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.totalElements").value(2))
-                .andExpect(jsonPath("$.content[0].inspectionId").value(9002));
+                .andExpect(jsonPath("$.content[0].inspectionId").value(9002))
+                .andExpect(jsonPath("$.content[0].productId").value("P-2"));
         mvc.perform(get("/api/v1/inspections").param("from", DAY).param("to", DAY).param("lineId", "B").param("result", "NG"))
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].paintId").value("PT1"));

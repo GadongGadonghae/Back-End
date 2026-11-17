@@ -50,7 +50,7 @@ class MasterApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
-                .andExpect(jsonPath("$[0].dataSource").value("OPCUA"));
+                .andExpect(jsonPath("$[0].dataSource").doesNotExist());
         mvc.perform(get("/api/v1/equipments"))
                 .andExpect(jsonPath("$.length()").value(3)); // 비활성 B-PR1 제외
     }

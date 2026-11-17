@@ -41,7 +41,7 @@ public class MasterService {
                         .thenComparing(Equipment::getProcessId)
                         .thenComparing(e -> e.getSeqNo() == null ? 0 : e.getSeqNo()))
                 .map(e -> new EquipmentResponse(e.getEquipmentId(), e.getEquipmentName(), e.getLineId(),
-                        e.getProcessId(), dataSource(e)))
+                        e.getProcessId()))
                 .toList();
     }
 
@@ -55,10 +55,5 @@ public class MasterService {
     public Equipment equipment(String equipmentId) {
         return equipmentRepository.findById(equipmentId).orElseThrow(() ->
                 new BusinessException(ErrorCode.EQUIPMENT_NOT_FOUND, "설비 " + equipmentId + "를 찾을 수 없습니다"));
-    }
-
-    /** 수집 경로: 슬리팅은 PLC(Modbus), 나머지는 Python OPC UA 가상 설비. DB에 컬럼이 없어 공정으로 정해요. */
-    private static String dataSource(Equipment e) {
-        return "SLITTING".equalsIgnoreCase(e.getProcessId()) ? "MODBUS" : "OPCUA";
     }
 }

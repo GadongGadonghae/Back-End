@@ -39,12 +39,12 @@ class AvailabilityApiTest {
                         + "('UP_BREAKDOWN','장비고장',false), ('UP_ALARM','알람',false), ('UP_DELAY','작업지연',false), ('PL_PM','예방보전',true)",
                 "insert into users(user_id, login_id, password_hash, user_name, role) values (1,'u1','x','김정비','OPERATOR'), (2,'u2','x','홍길동','OPERATOR'), (3,'u3','x','홍길동','OPERATOR')",
                 // 1: 40분 고장(조치 완료) / 2: 30초 고장(1분 미만) / 3: 계획정지 / 4: 공용 도장 알람 20분 / 5: 23:50부터 진행 중
-                "insert into downtime_event(downtime_id, equipment_id, status, code, started_at, ended_at, action_memo, action_user_id) values "
-                        + "(1,'A-PR1','D','UP_BREAKDOWN','2026-11-10 09:00:00','2026-11-10 09:40:00','금형 점검',1), "
-                        + "(2,'A-PR1','D','UP_BREAKDOWN','2026-11-10 10:00:00','2026-11-10 10:00:30',null,null), "
-                        + "(3,'B-PR1','S','PL_PM','2026-11-10 12:00:00','2026-11-10 13:00:00',null,null), "
-                        + "(4,'PT1','D','UP_ALARM','2026-11-10 14:00:00','2026-11-10 14:20:00',null,null), "
-                        + "(5,'B-PR1','D','UP_BREAKDOWN','2026-11-10 23:50:00',null,null,null)",
+                "insert into downtime_event(downtime_id, equipment_id, status, code, started_at, ended_at, action_memo, action_user_id, detail, action_at) values "
+                        + "(1,'A-PR1','D','UP_BREAKDOWN','2026-11-10 09:00:00','2026-11-10 09:40:00','금형 점검',1,'압력 상한 초과','2026-11-10 09:50:00'), "
+                        + "(2,'A-PR1','D','UP_BREAKDOWN','2026-11-10 10:00:00','2026-11-10 10:00:30',null,null,null,null), "
+                        + "(3,'B-PR1','S','PL_PM','2026-11-10 12:00:00','2026-11-10 13:00:00',null,null,null,null), "
+                        + "(4,'PT1','D','UP_ALARM','2026-11-10 14:00:00','2026-11-10 14:20:00',null,null,null,null), "
+                        + "(5,'B-PR1','D','UP_BREAKDOWN','2026-11-10 23:50:00',null,null,null,null,null)",
                 "insert into equipment_status_history(equipment_id, status, started_at, ended_at, downtime_id) values "
                         + "('A-PR1','R','2026-11-10 08:00:00','2026-11-10 09:00:00',null), ('A-PR1','D','2026-11-10 09:00:00','2026-11-10 09:40:00',1), "
                         + "('A-PR1','R','2026-11-10 09:40:00','2026-11-10 10:00:00',null), ('A-PR1','DC','2026-11-10 10:00:00',null,null)");
@@ -84,6 +84,8 @@ class AvailabilityApiTest {
                 .andExpect(jsonPath("$.content[0].actionUserId").value(1))
                 .andExpect(jsonPath("$.content[0].actionUserName").value("김정비"))
                 .andExpect(jsonPath("$.content[0].memo").value("금형 점검"))
+                .andExpect(jsonPath("$.content[0].detail").value("압력 상한 초과"))
+                .andExpect(jsonPath("$.content[0].actionAt").value("2026-11-10T09:50:00+09:00"))
                 .andExpect(jsonPath("$.content[0].startAt").value("2026-11-10T09:00:00+09:00"));
         mvc.perform(get("/api/v1/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0"))
                 .andExpect(jsonPath("$.totalElements").value(5));

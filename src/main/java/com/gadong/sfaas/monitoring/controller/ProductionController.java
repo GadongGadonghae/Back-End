@@ -27,9 +27,9 @@ public class ProductionController {
         this.service = service;
     }
 
-    @Operation(summary = "M-07 출고 양품/불량 카운트 (stub)",
+    @Operation(summary = "M-07 출고 양품/불량 카운트",
             description = "P1. total = inspected + processNg, ok = inspected − ngVision, yieldRate = ok ÷ total. "
-                    + "공용 도장 설비의 불량을 라인에 나누는 기준이 정해지지 않아 아직 예시 값이에요.")
+                    + "byProcess 는 lineId 를 지정했을 때만 채워요. groupBy=paint 는 도장 앞에서 폐기된 불량이 빠져요.")
     @GetMapping("/production/counts")
     public ProductionCountsResponse counts(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
                                            @RequestParam(required = false) String lineId,
@@ -37,7 +37,7 @@ public class ProductionController {
         return service.counts(date, lineId, groupBy);
     }
 
-    @Operation(summary = "M-08 비전 검사 결과 목록", description = "P2. result 는 OK/NG")
+    @Operation(summary = "M-08 비전 검사 결과 목록", description = "P1. result 는 OK/NG")
     @GetMapping("/inspections")
     public PageResponse<InspectionResponse> inspections(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                                         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
@@ -49,14 +49,14 @@ public class ProductionController {
         return service.inspections(from, to, lineId, paintId, result, page, size);
     }
 
-    @Operation(summary = "M-09 도장 경로 전환", description = "P2(중간발표 이후). line.current_paint_id 변경 + paint_route_history 기록. Q-03 MQTT 명령은 연동 전이에요")
+    @Operation(summary = "M-09 도장 경로 전환", description = "P1. line.current_paint_id 변경 + paint_route_history 기록. Q-03 MQTT 명령은 연동 전이에요")
     @PutMapping("/lines/{lineId}/paint-route")
     public PaintRouteResponse changePaintRoute(@PathVariable String lineId, @RequestBody PaintRouteRequest request) {
         return service.changePaintRoute(lineId, request);
     }
 
-    @Operation(summary = "M-13 공정별 재공품(WIP) 수량 (stub)",
-            description = "P1. 앞 공정 OK 행 수 − 다음 공정 행 수. 프레스 4대 행 수를 세는 기준이 정해지지 않아 아직 예시 값이에요.")
+    @Operation(summary = "M-13 공정별 재공품(WIP) 수량",
+            description = "P1. 앞 공정 OK 행 수 − 다음 공정 행 수(누적). 코일입고는 coil_receipt.product_qty 합 − 슬리팅 행 수이고 lineId 를 주면 빠져요.")
     @GetMapping("/production/wip")
     public List<WipResponse> wip(@RequestParam(required = false) String lineId) {
         return service.wip(lineId);

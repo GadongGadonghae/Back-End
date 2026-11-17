@@ -13,6 +13,7 @@ import com.gadong.sfaas.judge.entity.Downtime;
 import com.gadong.sfaas.judge.repository.DowntimeRepository;
 import com.gadong.sfaas.master.repository.DowntimeCodeRepository;
 import com.gadong.sfaas.master.service.MasterService;
+import com.gadong.sfaas.master.service.UserLookup;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -28,9 +29,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 가동률 화면 API 서비스. 비가동(U-07~U-10)과 상태 타임라인(U-12)은 downtime · status_log에서 읽어요.
- *
- * <p>TODO(BE1): U-01~U-06, U-11은 계획 가동시간·목표 가동률·시간당 생산 능력 기준이 정해지지 않아 아직 stub이에요.
+ * 가동률 화면 API 서비스. 비가동(U-07~U-10)과 상태 타임라인(U-12)을 downtime_event · equipment_status_history에서 읽어요.
+ * 가동률·OEE·양품률(U-01~U-06, U-11)은 {@link UtilizationService}가 해요.
  */
 @Service
 @Transactional(readOnly = true)
@@ -39,7 +39,7 @@ public class AvailabilityService {
     /** 조회 기간과 겹치는 비가동 구간. 조치 담당자 이름은 users(auth 소유) 테이블에서 가져와요 */
     private static final String DOWNTIME_SELECT = """
             SELECT d.downtime_id, d.equipment_id, e.line_id, e.process_id, d.status, d.code,
-                   d.started_at, d.ended_at, d.action_memo, d.action_user_id, u.user_name
+                   d.started_at, d.ended_at, d.detail, d.action_memo, d.action_user_id, d.action_at, u.user_name
             FROM downtime_event d
             JOIN equipment e ON e.equipment_id = d.equipment_id
             JOIN downtime_code c ON c.code = d.code
@@ -47,7 +47,8 @@ public class AvailabilityService {
             WHERE d.started_at < :to AND (d.ended_at IS NULL OR d.ended_at > :from)""";
 
     private record Stop(long id, String equipmentId, String lineId, String process, String status, String code,
-                        LocalDateTime start, LocalDateTime end, String memo, Integer actionUserId, String actionUserName) {
+                        LocalDateTime start, LocalDateTime end, String detail, String memo, Integer actionUserId,
+                        LocalDateTime actionAt, String actionUserName) {
         long minutes() {
             return Kst.minutes(start, end);
         }
@@ -74,36 +75,6 @@ public class AvailabilityService {
         this.users = users;
         this.downtimeRepository = downtimeRepository;
         this.downtimeCodeRepository = downtimeCodeRepository;
-    }
-
-    /** U-01 (stub) */
-    public SummaryResponse summary(LocalDate from, LocalDate to, String lineId) {
-        return new SummaryResponse(95.0, 91.4, null, 91.4, null, 91.5, 2880, 248, null);
-    }
-
-    /** U-02 (stub) */
-    public List<TrendResponse> trend(LocalDate from, LocalDate to, String unit, String lineId) {
-        return List.of(new TrendResponse("2026-11-17", 95.0, 92.1));
-    }
-
-    /** U-03 (stub) */
-    public List<ByProcessResponse> byProcess(LocalDate from, LocalDate to, String lineId) {
-        return List.of(new ByProcessResponse("PRESS", 89.3, null, 132));
-    }
-
-    /** U-04 (stub) */
-    public List<ByLineResponse> byLine(LocalDate from, LocalDate to) {
-        return List.of(new ByLineResponse("A", 93.0, 4));
-    }
-
-    /** U-05 (stub) */
-    public List<ByEquipmentResponse> byEquipment(LocalDate from, LocalDate to, String process, int limit) {
-        return List.of(new ByEquipmentResponse("C-WD", 78.5));
-    }
-
-    /** U-06 (stub) */
-    public List<ByWeekdayResponse> byWeekday(LocalDate from, LocalDate to, String lineId) {
-        return List.of(new ByWeekdayResponse("MON", 96.6, 108));
     }
 
     /**
@@ -168,8 +139,8 @@ public class AvailabilityService {
         List<Stop> stops = stops(where, p).stream().filter(s -> s.minutes() >= minMinutes).toList();
         List<DowntimeEventResponse> content = stops.stream().skip((long) page * size).limit(size)
                 .map(s -> new DowntimeEventResponse(s.id(), s.lineId(), s.equipmentId(), s.process(), s.status(), s.code(),
-                        Kst.of(s.start()), Kst.of(s.end()), s.minutes(), s.end() == null, s.actionUserId(), s.actionUserName(),
-                        s.memo() == null ? "" : s.memo()))
+                        Kst.of(s.start()), Kst.of(s.end()), s.minutes(), s.end() == null, s.detail(), s.actionUserId(),
+                        s.actionUserName(), Kst.of(s.actionAt()), s.memo() == null ? "" : s.memo()))
                 .toList();
         return new PageResponse<>(content, stops.size());
     }
@@ -211,11 +182,6 @@ public class AvailabilityService {
                 .toList();
     }
 
-    /** U-11 (stub) */
-    public List<YieldResponse> yield(LocalDate from, LocalDate to, String unit, String groupBy) {
-        return List.of(new YieldResponse("2026-11-17", 1180, 1121, 95.0));
-    }
-
     /** U-12: equipment_status_history 구간. R·DC가 아닌 구간의 사유는 downtime_id로 연결된 비가동 이력에서 가져와요 */
     public List<StatusSegmentResponse> statusHistory(String equipmentId, LocalDate from, LocalDate to) {
         Checks.period(from, to);
@@ -238,6 +204,7 @@ public class AvailabilityService {
                 new Stop(rs.getLong("downtime_id"), rs.getString("equipment_id"), rs.getString("line_id"),
                         rs.getString("process_id"), rs.getString("status").trim(), rs.getString("code"),
                         rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class),
-                        rs.getString("action_memo"), rs.getObject("action_user_id", Integer.class), rs.getString("user_name")));
+                        rs.getString("detail"), rs.getString("action_memo"), rs.getObject("action_user_id", Integer.class),
+                        rs.getObject("action_at", LocalDateTime.class), rs.getString("user_name")));
     }
 }

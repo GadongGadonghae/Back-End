@@ -2,6 +2,7 @@ package com.gadong.sfaas.availability.controller;
 
 import com.gadong.sfaas.availability.dto.AvailabilityDtos.*;
 import com.gadong.sfaas.availability.service.AvailabilityService;
+import com.gadong.sfaas.availability.service.UtilizationService;
 import com.gadong.sfaas.global.response.PageResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,59 +25,61 @@ public class AvailabilityController {
     private static final String DATE = "yyyy-MM-dd";
 
     private final AvailabilityService service;
+    private final UtilizationService utilization;
 
-    public AvailabilityController(AvailabilityService service) {
+    public AvailabilityController(AvailabilityService service, UtilizationService utilization) {
         this.service = service;
+        this.utilization = utilization;
     }
 
-    @Operation(summary = "U-01 공장 전체 가동률 요약 (목표/실적) (stub)",
-            description = "P1. OEE = availability × performance × quality. 계획 가동시간·목표·시간당 생산 능력 기준이 정해지지 않아 아직 예시 값이에요.")
+    @Operation(summary = "U-01 공장 전체 가동률 요약 (목표/실적)",
+            description = "P1. OEE = availability × performance × quality.")
     @GetMapping("/utilization/summary")
     public SummaryResponse summary(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                    @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
                                    @RequestParam(required = false) String lineId) {
-        return service.summary(from, to, lineId);
+        return utilization.summary(from, to, lineId);
     }
 
-    @Operation(summary = "U-02 가동률 추이 (stub)", description = "P1")
+    @Operation(summary = "U-02 가동률 추이", description = "P1")
     @GetMapping("/utilization/trend")
     public List<TrendResponse> trend(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                      @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
                                      @RequestParam(defaultValue = "day") String unit,
                                      @RequestParam(required = false) String lineId) {
-        return service.trend(from, to, unit, lineId);
+        return utilization.trend(from, to, unit, lineId);
     }
 
-    @Operation(summary = "U-03 공정별 가동률 (stub)", description = "P1")
+    @Operation(summary = "U-03 공정별 가동률", description = "P1")
     @GetMapping("/utilization/by-process")
     public List<ByProcessResponse> byProcess(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                              @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
                                              @RequestParam(required = false) String lineId) {
-        return service.byProcess(from, to, lineId);
+        return utilization.byProcess(from, to, lineId);
     }
 
-    @Operation(summary = "U-04 라인별 가동률 (stub)", description = "P1")
+    @Operation(summary = "U-04 라인별 가동률", description = "P1")
     @GetMapping("/utilization/by-line")
     public List<ByLineResponse> byLine(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                        @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to) {
-        return service.byLine(from, to);
+        return utilization.byLine(from, to);
     }
 
-    @Operation(summary = "U-05 설비별 가동률 순위 (낮은 순) (stub)", description = "P2")
+    @Operation(summary = "U-05 설비별 가동률 순위 (낮은 순)", description = "P2")
     @GetMapping("/utilization/by-equipment")
     public List<ByEquipmentResponse> byEquipment(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                  @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
                                                  @RequestParam(required = false) String process,
                                                  @RequestParam(defaultValue = "10") int limit) {
-        return service.byEquipment(from, to, process, limit);
+        return utilization.byEquipment(from, to, process, limit);
     }
 
-    @Operation(summary = "U-06 요일별 가동률 + 비가동 건수 (stub)", description = "P2")
+    @Operation(summary = "U-06 요일별 가동률 + 비가동 건수", description = "P2")
     @GetMapping("/utilization/by-weekday")
     public List<ByWeekdayResponse> byWeekday(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                              @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
                                              @RequestParam(required = false) String lineId) {
-        return service.byWeekday(from, to, lineId);
+        return utilization.byWeekday(from, to, lineId);
     }
 
     @Operation(summary = "U-07 비가동 사유별 집계 (파이·표)",
@@ -124,13 +127,13 @@ public class AvailabilityController {
         return service.downtimeTop(from, to, minMinutes, limit);
     }
 
-    @Operation(summary = "U-11 양품률 추이 (stub)", description = "P1")
+    @Operation(summary = "U-11 양품률 추이", description = "P1")
     @GetMapping("/production/yield")
     public List<YieldResponse> yield(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                      @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
                                      @RequestParam(defaultValue = "day") String unit,
                                      @RequestParam(required = false) String groupBy) {
-        return service.yield(from, to, unit, groupBy);
+        return utilization.yield(from, to, unit, groupBy);
     }
 
     @Operation(summary = "U-12 설비 R/S/I/D/DC 상태 타임라인", description = "P2")

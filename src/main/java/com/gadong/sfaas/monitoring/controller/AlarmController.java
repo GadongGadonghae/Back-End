@@ -44,7 +44,7 @@ public class AlarmController {
         return service.alarms(from, to, equipmentId, page, size);
     }
 
-    @Operation(summary = "M-06 알람 확인 처리", description = "P2. 확인한 사람은 JWT 연동 후 기록돼요")
+    @Operation(summary = "M-06 알람 확인 처리", description = "P2. 본문 ackUserId 는 확인한 사용자 번호예요. 이미 확인한 알람은 처음 기록을 유지해요.")
     @PatchMapping("/{alarmId}/ack")
     public AckResponse ack(@PathVariable long alarmId, @RequestBody(required = false) AckRequest request) {
         return service.ack(alarmId, request);
