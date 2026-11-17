@@ -69,14 +69,14 @@ class PlanningApiTest {
     void r01r02Reports() throws Exception {
         mvc.perform(get("/api/reassignments").param("from", "2026-11-10").param("to", "2026-11-10"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.content[0].reportId").value(12))
-                .andExpect(jsonPath("$.content[0].downtimeId").value(10))
-                .andExpect(jsonPath("$.content[0].sourceLineId").value("A"))
-                .andExpect(jsonPath("$.content[0].equipmentId").value("A-PR1"))
-                .andExpect(jsonPath("$.content[0].stopMin").value(42))
-                .andExpect(jsonPath("$.content[0].lossQty").value(126))
-                .andExpect(jsonPath("$.content[0].createdAt").value("2026-11-10T09:55:00+09:00"));
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].reportId").value(12))
+                .andExpect(jsonPath("$.items[0].downtimeId").value(10))
+                .andExpect(jsonPath("$.items[0].sourceLineId").value("A"))
+                .andExpect(jsonPath("$.items[0].equipmentId").value("A-PR1"))
+                .andExpect(jsonPath("$.items[0].stopMin").value(42))
+                .andExpect(jsonPath("$.items[0].lossQty").value(126))
+                .andExpect(jsonPath("$.items[0].createdAt").value("2026-11-10T09:55:00+09:00"));
         mvc.perform(get("/api/reassignments/12"))
                 .andExpect(jsonPath("$.downtimeId").value(10))
                 .andExpect(jsonPath("$.sourceLineId").value("A"))

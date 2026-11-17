@@ -125,7 +125,7 @@ public class PlanningService {
                         rs.getString("equipment_id"),
                         Kst.minutes(rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class)),
                         rs.getInt("loss_qty"), Kst.of(rs.getObject("created_at", LocalDateTime.class))));
-        return new PageResponse<>(content, total);
+        return new PageResponse<>(content, total, page, size);
     }
 
     /** R-02 */

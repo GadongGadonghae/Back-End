@@ -10,21 +10,22 @@ import java.util.Map;
 public final class AvailabilityDtos {
     private AvailabilityDtos() {}
 
-    /** U-01. 처리한 제품이 없어 속도가동률을 못 구하면 performance, oee 는 null */
+    /** U-01. 가동시간·판정 제품이 없어 못 구하면 performance, oee 는 null. lineYield(출고 양품 ÷ 슬리팅 투입)는 OEE와 별개, 투입이 없으면 null */
     public record SummaryResponse(double target, double actual, Double oee, double availability, Double performance,
-                                  double quality, long plannedMin, long unplannedStopMin, Long lossQty) {}
+                                  double quality, long plannedMin, long unplannedStopMin, Long lossQty, Double lineYield) {}
 
-    /** U-02 */
-    public record TrendResponse(String period, double target, double actual) {}
+    /** U-02. actual = availability. 못 구하는 값은 null */
+    public record TrendResponse(String period, double target, double actual, Double oee, double availability,
+                                Double performance, Double quality) {}
 
     /** U-03 */
     public record ByProcessResponse(String process, double actual, Double oee, long unplannedStopMin) {}
 
     /** U-04 */
-    public record ByLineResponse(String lineId, double actual, int stopCount) {}
+    public record ByLineResponse(String lineId, double actual, int stopCount, Double oee, Double lineYield) {}
 
     /** U-05 */
-    public record ByEquipmentResponse(String equipmentId, double actual) {}
+    public record ByEquipmentResponse(String equipmentId, double actual, Double oee) {}
 
     /** U-06 */
     public record ByWeekdayResponse(@Schema(example = "MON") String weekday, double actual, int stopCount) {}

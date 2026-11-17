@@ -137,12 +137,12 @@ public class AvailabilityService {
 
         // shortcut: minMinutes 필터와 페이지 나누기를 메모리에서 해요. 기간 안 비가동이 수만 건을 넘으면 SQL로 옮겨요
         List<Stop> stops = stops(where, p).stream().filter(s -> s.minutes() >= minMinutes).toList();
-        List<DowntimeEventResponse> content = stops.stream().skip((long) page * size).limit(size)
+        List<DowntimeEventResponse> content = stops.stream().skip((long) (page - 1) * size).limit(size)
                 .map(s -> new DowntimeEventResponse(s.id(), s.lineId(), s.equipmentId(), s.process(), s.status(), s.code(),
                         Kst.of(s.start()), Kst.of(s.end()), s.minutes(), s.end() == null, s.detail(), s.actionUserId(),
                         s.actionUserName(), Kst.of(s.actionAt()), s.memo() == null ? "" : s.memo()))
                 .toList();
-        return new PageResponse<>(content, stops.size());
+        return new PageResponse<>(content, stops.size(), page, size);
     }
 
     /** U-09: reasonCode·memo·actionUserId 중 보낸 값만 바꿔요. 응답에 조치 담당자 이름을 붙여요 */
