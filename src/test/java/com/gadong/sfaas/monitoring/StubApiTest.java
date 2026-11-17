@@ -41,7 +41,16 @@ class StubApiTest {
     void m02LineSummaryUsesUppercaseKeys() throws Exception {
         mvc.perform(get("/api/v1/monitoring/lines/summary"))
                 .andExpect(jsonPath("$[0].R").value(5))
+                .andExpect(jsonPath("$[0].DC").value(0))
                 .andExpect(jsonPath("$[0].worstStatus").value("I"));
+    }
+
+    @Test
+    void m10ThresholdsAreDistinguishedByEquipment() throws Exception {
+        mvc.perform(get("/api/v1/alarms/thresholds").param("equipmentId", "C-WD"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].equipmentId").value("C-WD"))
+                .andExpect(jsonPath("$[0].process").value("WELDING"));
     }
 
     @Test
@@ -53,6 +62,19 @@ class StubApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.actual").value(91.4))
                 .andExpect(jsonPath("$.lossQty").doesNotExist());
+    }
+
+    @Test
+    void u09ActionUserIsSentAsIdAndReturnedWithName() throws Exception {
+        mvc.perform(patch("/api/v1/downtime/events/1").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reasonCode\":\"UP_BREAKDOWN\",\"memo\":\"점검\",\"actionUserId\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actionUserId").value(7))
+                .andExpect(jsonPath("$.actionUserName").value("홍길동"));
+        mvc.perform(get("/api/v1/downtime/events").param("from", "2026-11-17").param("to", "2026-11-18")
+                        .param("actionUserId", "7"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].actionUserId").value(7));
     }
 
     @Test

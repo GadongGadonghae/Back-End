@@ -27,7 +27,7 @@ public class MonitoringService {
 
     /** M-02 */
     public List<LineSummaryResponse> linesSummary() {
-        return List.of(new LineSummaryResponse("A", 5, 0, 1, 0, "I"));
+        return List.of(new LineSummaryResponse("A", 5, 0, 1, 0, 0, "I"));
     }
 
     /** M-03: interval=raw 는 사이클 값 그대로, 5s 는 조회 때 5초 평균을 계산(저장하지 않음) */
@@ -52,8 +52,8 @@ public class MonitoringService {
     }
 
     /** M-10 */
-    public List<ThresholdResponse> thresholds(String process) {
-        return List.of(new ThresholdResponse(1, "WELDING", "current", 0.0, 15.07));
+    public List<ThresholdResponse> thresholds(String process, String equipmentId) {
+        return List.of(new ThresholdResponse(1, "C-WD", "WELDING", "current", 0.0, 15.07));
     }
 
     /** M-11 */
