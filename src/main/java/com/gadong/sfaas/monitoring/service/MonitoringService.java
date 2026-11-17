@@ -113,7 +113,7 @@ public class MonitoringService {
 
         Map<String, Threshold> limits = thresholdRepository.findByEquipmentId(equipmentId).stream()
                 .collect(Collectors.toMap(Threshold::getItemName, Function.identity(), (a, b) -> a));
-        // shortcut: 프레스 행에 단별 시각이 없어 점 시각은 행이 생긴 시각(PR1)이에요. 단별 시각 컬럼이 생기면 그걸로 바꿔요
+        // shortcut: 프레스 행은 단이 쓸 때마다 measured_at이 바뀌어 점 시각은 그 제품의 마지막 단 시각이에요(PR4만 정확). 단별 시각 컬럼이 생기면 그걸로 바꿔요
         String where = stage == null ? "equipment_id = :eq"
                 : "equipment_id IN (SELECT equipment_id FROM equipment WHERE line_id = :line AND process_id = 'PRESS') AND " + stage + " IS NOT NULL";
         MapSqlParameterSource p = new MapSqlParameterSource().addValue("eq", equipmentId).addValue("line", equipment.getLineId())

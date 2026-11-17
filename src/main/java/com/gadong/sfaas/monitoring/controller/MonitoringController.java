@@ -28,8 +28,8 @@ public class MonitoringController {
     }
 
     @Operation(summary = "M-15 설비별 사이클 수·평균 CT (공정 상세)",
-            description = "그날 설비별 처리 행 수와 평균 CT(ms). date 생략 시 오늘. 프레스는 단(PR1~PR4)마다 자기 칸이 채워진 행 수이고, "
-                    + "단별 시각이 없어 CT는 라인의 제품 간격이에요(네 단이 같음)")
+            description = "그날 설비별 처리 행 수와 CT(ms, 연속한 두 행 간격의 중앙값이라 정지 시간은 빠져요). date 생략 시 오늘. "
+                    + "프레스는 단(PR1~PR4)마다 자기 칸이 채워진 행 수이고, 행 시각이 마지막 단 시각으로 바뀌어서 CT는 PR4만 줘요(PR1~PR3 null)")
     @GetMapping("/monitoring/processes/{process}/cycles")
     public List<CycleResponse> cycles(@PathVariable String process,
                                       @RequestParam(required = false) String lineId,

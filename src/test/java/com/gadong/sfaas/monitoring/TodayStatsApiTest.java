@@ -43,7 +43,8 @@ class TodayStatsApiTest {
                         + "('A-PR4','2026-11-10 09:00:00',275,271,4,551), ('A-PR4','2026-11-10 09:00:17',276,272,4,550), "
                         + "('A-PR1','2026-11-10 09:00:34',277,null,null,null)",
                 "insert into welding_data(equipment_id, measured_at, current) values "
-                        + "('A-WD','2026-11-10 09:00:00',15.0), ('A-WD','2026-11-10 09:00:20',15.0), ('A-WD','2026-11-10 09:00:40',15.0)");
+                        + "('A-WD','2026-11-10 09:00:00',15.0), ('A-WD','2026-11-10 09:00:20',15.0), ('A-WD','2026-11-10 09:00:40',15.0), "
+                        + "('A-WD','2026-11-10 10:00:00',15.0)"); // 1시간 멈춘 뒤 다시 1개
     }
 
     @Test
@@ -51,15 +52,16 @@ class TodayStatsApiTest {
         mvc.perform(get("/api/monitoring/processes/WELDING/cycles").param("date", DAY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].equipmentId").value("A-WD"))
-                .andExpect(jsonPath("$[0].cycles").value(3))
-                .andExpect(jsonPath("$[0].avgCtMs").value(20000));
+                .andExpect(jsonPath("$[0].cycles").value(4))
+                .andExpect(jsonPath("$[0].avgCtMs").value(20000)); // 간격 중앙값이라 멈춘 1시간이 안 끼어요
         mvc.perform(get("/api/monitoring/processes/PRESS/cycles").param("date", DAY).param("lineId", "A"))
                 .andExpect(jsonPath("$.length()").value(4))
                 .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$[0].cycles").value(3))
-                .andExpect(jsonPath("$[0].avgCtMs").value(17000))
+                .andExpect(jsonPath("$[0].avgCtMs").doesNotExist()) // PR1~PR3은 행 시각이 덮여서 CT를 못 구해요
                 .andExpect(jsonPath("$[3].equipmentId").value("A-PR4"))
-                .andExpect(jsonPath("$[3].cycles").value(2));
+                .andExpect(jsonPath("$[3].cycles").value(2))
+                .andExpect(jsonPath("$[3].avgCtMs").value(17000)); // PR4 끝난 시각 간격
         mvc.perform(get("/api/monitoring/processes/NOPE/cycles")).andExpect(status().isBadRequest());
     }
 
