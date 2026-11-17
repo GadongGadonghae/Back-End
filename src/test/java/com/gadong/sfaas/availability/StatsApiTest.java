@@ -64,7 +64,7 @@ class StatsApiTest {
     @Test
     void m07CountsByLineAndPaint() throws Exception {
         // 생산 8 = 검사 6 + 공정 불량 2(프레스 A 1, 도장 B 1). 양품 5 = 검사 6 − 비전 불량 1
-        mvc.perform(get("/api/v1/production/counts").param("date", DAY))
+        mvc.perform(get("/api/production/counts").param("date", DAY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(8))
                 .andExpect(jsonPath("$.processNg").value(2))
@@ -79,22 +79,22 @@ class StatsApiTest {
                 .andExpect(jsonPath("$.byGroup[1].key").value("B"))
                 .andExpect(jsonPath("$.byGroup[1].total").value(3))
                 .andExpect(jsonPath("$.byProcess.length()").value(0)); // lineId를 주지 않으면 비어요
-        mvc.perform(get("/api/v1/production/counts").param("date", DAY).param("lineId", "A"))
+        mvc.perform(get("/api/production/counts").param("date", DAY).param("lineId", "A"))
                 .andExpect(jsonPath("$.total").value(5))
                 .andExpect(jsonPath("$.byProcess[?(@.process=='PRESS')].produced").value(3))
                 .andExpect(jsonPath("$.byProcess[?(@.process=='PRESS')].ng").value(1));
-        mvc.perform(get("/api/v1/production/counts").param("date", DAY).param("groupBy", "paint"))
+        mvc.perform(get("/api/production/counts").param("date", DAY).param("groupBy", "paint"))
                 .andExpect(jsonPath("$.byGroup.length()").value(1)) // 도장 앞에서 폐기된 불량(프레스 NG)은 빠져요
                 .andExpect(jsonPath("$.byGroup[0].key").value("PT1"))
                 .andExpect(jsonPath("$.byGroup[0].total").value(7))
                 .andExpect(jsonPath("$.byGroup[0].good").value(5));
-        mvc.perform(get("/api/v1/production/counts").param("groupBy", "shift")).andExpect(status().isBadRequest());
-        mvc.perform(get("/api/v1/production/counts").param("lineId", "Z")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/production/counts").param("groupBy", "shift")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/production/counts").param("lineId", "Z")).andExpect(status().isNotFound());
     }
 
     @Test
     void m13WipIsPreviousOkMinusNextRows() throws Exception {
-        mvc.perform(get("/api/v1/production/wip"))
+        mvc.perform(get("/api/production/wip"))
                 .andExpect(jsonPath("$[0].process").value("COIL"))
                 .andExpect(jsonPath("$[0].nextProcess").value("SLITTING"))
                 .andExpect(jsonPath("$[0].wipQty").value(35)) // 코일 40개 − 슬리팅 5
@@ -107,7 +107,7 @@ class StatsApiTest {
                 .andExpect(jsonPath("$[4].process").value("PAINTING"))
                 .andExpect(jsonPath("$[4].nextProcess").value("INSPECTION"))
                 .andExpect(jsonPath("$[4].wipQty").value(0)); // 음수는 0
-        mvc.perform(get("/api/v1/production/wip").param("lineId", "A"))
+        mvc.perform(get("/api/production/wip").param("lineId", "A"))
                 .andExpect(jsonPath("$.length()").value(4)) // 코일은 라인 구분이 없어 빠져요
                 .andExpect(jsonPath("$[0].process").value("SLITTING"))
                 .andExpect(jsonPath("$[0].wipQty").value(2))
@@ -117,7 +117,7 @@ class StatsApiTest {
     @Test
     void u01Summary() throws Exception {
         // 라인 설비 6대. 계획 가동: A 86400+86400+82800, B 3×86400 = 514,800초(8,580분). 비계획: 3,600 + 1,800(계획정지 안 30분 제외) = 5,400초(90분)
-        mvc.perform(get("/api/v1/utilization/summary").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/utilization/summary").param("from", DAY).param("to", DAY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.target").value(95.0))
                 .andExpect(jsonPath("$.availability").value(99.0))
@@ -128,27 +128,27 @@ class StatsApiTest {
                 .andExpect(jsonPath("$.quality").value(62.5))
                 .andExpect(jsonPath("$.performance").isNumber())
                 .andExpect(jsonPath("$.oee").isNumber());
-        mvc.perform(get("/api/v1/utilization/summary").param("from", DAY).param("to", DAY).param("lineId", "B"))
+        mvc.perform(get("/api/utilization/summary").param("from", DAY).param("to", DAY).param("lineId", "B"))
                 .andExpect(jsonPath("$.availability").value(100.0))
                 .andExpect(jsonPath("$.unplannedStopMin").value(0));
-        mvc.perform(get("/api/v1/utilization/summary").param("from", DAY)).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/utilization/summary").param("from", DAY)).andExpect(status().isBadRequest());
     }
 
     @Test
     void u02u03u04Breakdowns() throws Exception {
-        mvc.perform(get("/api/v1/utilization/trend").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/utilization/trend").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].period").value(DAY))
                 .andExpect(jsonPath("$[0].actual").value(99.0));
-        mvc.perform(get("/api/v1/utilization/trend").param("from", DAY).param("to", DAY).param("unit", "week"))
+        mvc.perform(get("/api/utilization/trend").param("from", DAY).param("to", DAY).param("unit", "week"))
                 .andExpect(jsonPath("$[0].period").value("2026-11-09")); // 월요일
-        mvc.perform(get("/api/v1/utilization/trend").param("from", DAY).param("to", DAY).param("unit", "month"))
+        mvc.perform(get("/api/utilization/trend").param("from", DAY).param("to", DAY).param("unit", "month"))
                 .andExpect(jsonPath("$[0].period").value("2026-11"));
-        mvc.perform(get("/api/v1/utilization/trend").param("from", DAY).param("to", DAY).param("unit", "year"))
+        mvc.perform(get("/api/utilization/trend").param("from", DAY).param("to", DAY).param("unit", "year"))
                 .andExpect(status().isBadRequest());
 
         // 프레스: 계획 172,800 − 비계획 3,600 = 97.9. 용접: 169,200 중 1,800 = 98.9
-        mvc.perform(get("/api/v1/utilization/by-process").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/utilization/by-process").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.length()").value(5))
                 .andExpect(jsonPath("$[?(@.process=='PRESS')].actual").value(97.9))
                 .andExpect(jsonPath("$[?(@.process=='PRESS')].unplannedStopMin").value(60))
@@ -156,7 +156,7 @@ class StatsApiTest {
                 .andExpect(jsonPath("$[?(@.process=='WELDING')].unplannedStopMin").value(30))
                 .andExpect(jsonPath("$[?(@.process=='PAINTING')].actual").value(100.0));
 
-        mvc.perform(get("/api/v1/utilization/by-line").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/utilization/by-line").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$[0].lineId").value("A"))
                 .andExpect(jsonPath("$[0].actual").value(97.9))
                 .andExpect(jsonPath("$[0].stopCount").value(2))
@@ -167,17 +167,17 @@ class StatsApiTest {
 
     @Test
     void u05u06RankAndWeekday() throws Exception {
-        mvc.perform(get("/api/v1/utilization/by-equipment").param("from", DAY).param("to", DAY).param("limit", "2"))
+        mvc.perform(get("/api/utilization/by-equipment").param("from", DAY).param("to", DAY).param("limit", "2"))
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].equipmentId").value("A-PR1")) // 낮은 순: 82,800 ÷ 86,400 = 95.8
                 .andExpect(jsonPath("$[0].actual").value(95.8))
                 .andExpect(jsonPath("$[1].equipmentId").value("A-WD")) // 81,000 ÷ 82,800 = 97.8
                 .andExpect(jsonPath("$[1].actual").value(97.8));
-        mvc.perform(get("/api/v1/utilization/by-equipment").param("from", DAY).param("to", DAY).param("process", "slitting"))
+        mvc.perform(get("/api/utilization/by-equipment").param("from", DAY).param("to", DAY).param("process", "slitting"))
                 .andExpect(jsonPath("$.length()").value(2));
-        mvc.perform(get("/api/v1/utilization/by-equipment").param("from", DAY).param("to", DAY).param("limit", "0"))
+        mvc.perform(get("/api/utilization/by-equipment").param("from", DAY).param("to", DAY).param("limit", "0"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(get("/api/v1/utilization/by-weekday").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/utilization/by-weekday").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].weekday").value("TUE"))
                 .andExpect(jsonPath("$[0].actual").value(99.0))
@@ -186,21 +186,21 @@ class StatsApiTest {
 
     @Test
     void u11YieldAndG01Achievement() throws Exception {
-        mvc.perform(get("/api/v1/production/yield").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/production/yield").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].period").value(DAY))
                 .andExpect(jsonPath("$[0].key").doesNotExist())
                 .andExpect(jsonPath("$[0].total").value(8))
                 .andExpect(jsonPath("$[0].good").value(5))
                 .andExpect(jsonPath("$[0].yieldRate").value(62.5));
-        mvc.perform(get("/api/v1/production/yield").param("from", DAY).param("to", DAY).param("groupBy", "line"))
+        mvc.perform(get("/api/production/yield").param("from", DAY).param("to", DAY).param("groupBy", "line"))
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].key").value("A"))
                 .andExpect(jsonPath("$[0].yieldRate").value(60.0))
                 .andExpect(jsonPath("$[1].key").value("B"))
                 .andExpect(jsonPath("$[1].yieldRate").value(66.7));
 
-        mvc.perform(get("/api/v1/production/summary").param("from", DAY).param("to", DAY))
+        mvc.perform(get("/api/production/summary").param("from", DAY).param("to", DAY))
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].lineId").value("A"))
                 .andExpect(jsonPath("$[0].planQty").value(10))
@@ -209,7 +209,7 @@ class StatsApiTest {
                 .andExpect(jsonPath("$[1].lineId").value("B"))
                 .andExpect(jsonPath("$[1].planQty").value(0))
                 .andExpect(jsonPath("$[1].achievementRate").value(0.0));
-        mvc.perform(get("/api/v1/production/summary").param("from", DAY).param("to", DAY).param("unit", "month").param("lineId", "A"))
+        mvc.perform(get("/api/production/summary").param("from", DAY).param("to", DAY).param("unit", "month").param("lineId", "A"))
                 .andExpect(jsonPath("$[0].period").value("2026-11"));
     }
 }

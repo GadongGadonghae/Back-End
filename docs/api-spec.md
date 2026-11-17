@@ -32,7 +32,8 @@
 
 ## 공통 규칙
 
-- Base URL: `http://localhost:8080/api/v1`
+- Base URL: `http://localhost:8080/api`
+- 주소에 버전을 붙이지 않음(11/17 결정)
 - 인증: Spring Security + JWT. 로그인 후 `Authorization: Bearer <token>` 헤더. (C-01 로그인 외 엔드포인트별 인증 여부는 명세에 없음)
 - 시간: ISO-8601 KST(`2026-11-18T09:30:00+09:00`). 백엔드는 `Asia/Seoul` 고정, DB는 시간대 없는 `TIMESTAMP`에 KST로 저장. 기간 조회는 `from`, `to`
 - 명명: URL은 소문자·복수형 명사, JSON 필드는 camelCase
@@ -269,7 +270,7 @@ DC 판정: 설비(Node-RED·가상 설비)가 1초마다 상태 신호(heartbeat
 3. **Node-RED** (정제 (function 노드)) — 브로커에서 원본 값(sfaas/raw)을 구독해 정제하고, MQTT로 다시 보내지 않고 PostgreSQL에 바로 저장(INSERT)해요. 정제는 형식 통일(equipmentId·KST ts·숫자 변환), camelCase 이름 변환, 단위·스케일 맞추기, 필수값 확인, 센서 오류 제거, 중복·순서 정리 6가지예요. 상태·알람·OK/NG 판정은 하지 않아요(판정 칸은 비워 두고 저장).
 4. **PostgreSQL** (Node-RED가 저장 · Spring Boot가 판정 갱신) — 공정별 사이클 테이블 4개와 inspection_result는 Node-RED가 값을 INSERT하고 Spring Boot가 result를 채워요. alarm, equipment_status_history, downtime_event, reassignment_*, users 등은 Spring Boot가 저장해요.
 5. **Spring Boot** (판정) — DB에 Node-RED가 저장한 새 값을 읽고(1초마다 새 행을 조회) 설비 상태 신호(DB의 equipment_signal)와 함께 RSID 상태, 알람, 공정/비전 OK·NG, 비가동 사유를 판정해 DB에 갱신해요. 기준치는 API(M-10/M-11)로 바꿀 수 있고, 가동률·OEE·재공품도 여기서 계산해요.
-6. **REST + WebSocket** (/api/v1 · /ws (STOMP)) — 처음 조회와 이력은 REST, 이후 변화는 WebSocket 채널 4개로 푸시해요. 판정 결과는 DB에 갱신한 뒤 바로 나가요.
+6. **REST + WebSocket** (/api · /ws (STOMP)) — 처음 조회와 이력은 REST, 이후 변화는 WebSocket 채널 4개로 푸시해요. 판정 결과는 DB에 갱신한 뒤 바로 나가요.
 7. **Vue + ECharts** (모니터링 · 가동률) — 화면 2개(모니터링 · 가동률)와 로그인·사용자 관리. REST로 현재 상태를 받고 /ws를 구독해 실시간으로 갱신해요.
 
 저장 테이블: `coil_receipt` · `slitting_data` · `press_data` · `welding_data` · `painting_data` · `inspection_result` · `alarm` · `equipment_status_history` · `downtime_event` · `reassignment_report` · `reassignment_detail` · `users` · `chat_message (가칭, P2)`

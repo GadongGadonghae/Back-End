@@ -12,7 +12,7 @@ import org.springframework.security.web.SecurityFilterChain;
 /**
  * 임시 보안 설정: 로그인(JWT)을 붙이기 전까지 모든 요청을 허용해요.
  *
- * <p>TODO(BE2): JWT 필터를 추가하고, /api/v1/auth/login · Swagger · /ws 외에는 인증을 요구하도록 바꾸기
+ * <p>TODO(BE2): JWT 필터를 추가하고, /api/auth/login · Swagger · /ws 외에는 인증을 요구하도록 바꾸기
  */
 @Configuration
 public class SecurityConfig {

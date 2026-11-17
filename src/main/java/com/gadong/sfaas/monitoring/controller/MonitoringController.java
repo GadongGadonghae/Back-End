@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "모니터링 · 설비 상태")
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api")
 public class MonitoringController {
 
     private final MonitoringService service;

@@ -14,7 +14,7 @@ public class OpenApiConfig {
         return new OpenAPI()
                 .info(new Info()
                         .title("SFaaS 라인 가동 현황 모니터링 API")
-                        .version("v1")
-                        .description("REST API 문서. MQTT·WebSocket 규칙은 API 명세서 v2가 기준이에요."));
+                        .version("v3")
+                        .description("API 명세서 v3"));
     }
 }

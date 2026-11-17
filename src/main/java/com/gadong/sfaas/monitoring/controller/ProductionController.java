@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "모니터링 · 생산·검사")
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api")
 public class ProductionController {
 
     private final MonitoringService service;

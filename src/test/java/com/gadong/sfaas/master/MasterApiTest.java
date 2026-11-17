@@ -35,7 +35,7 @@ class MasterApiTest {
     @Test
     void lines() throws Exception {
         seed();
-        mvc.perform(get("/api/v1/lines"))
+        mvc.perform(get("/api/lines"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].lineId").value("A"))
@@ -46,19 +46,19 @@ class MasterApiTest {
     @Test
     void equipmentsFilteredAndSorted() throws Exception {
         seed();
-        mvc.perform(get("/api/v1/equipments").param("lineId", "A").param("process", "PRESS"))
+        mvc.perform(get("/api/equipments").param("lineId", "A").param("process", "PRESS"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$[0].dataSource").doesNotExist());
-        mvc.perform(get("/api/v1/equipments"))
+        mvc.perform(get("/api/equipments"))
                 .andExpect(jsonPath("$.length()").value(3)); // 비활성 B-PR1 제외
     }
 
     @Test
     void unknownLineGivesErrorBody() throws Exception {
         seed();
-        mvc.perform(get("/api/v1/equipments").param("lineId", "Z"))
+        mvc.perform(get("/api/equipments").param("lineId", "Z"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.code").value("LINE_NOT_FOUND"))

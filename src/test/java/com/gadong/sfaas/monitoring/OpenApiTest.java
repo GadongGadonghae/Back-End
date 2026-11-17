@@ -21,9 +21,9 @@ class OpenApiTest {
     void openApiListsSpecPaths() throws Exception {
         mvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/downtime/events']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/planned-stops/{stopId}/end']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/alarms/thresholds/{id}']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/reassignments/{reportId}/approve']").doesNotExist());
+                .andExpect(jsonPath("$.paths['/api/downtime/events']").exists())
+                .andExpect(jsonPath("$.paths['/api/planned-stops/{stopId}/end']").exists())
+                .andExpect(jsonPath("$.paths['/api/alarms/thresholds/{id}']").exists())
+                .andExpect(jsonPath("$.paths['/api/reassignments/{reportId}/approve']").doesNotExist());
     }
 }
