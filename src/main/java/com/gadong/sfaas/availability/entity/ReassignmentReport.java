@@ -12,6 +12,6 @@ public class ReassignmentReport {
     @Column(name = "loss_qty") private Integer lossQty;
     @Column(name = "created_at") private LocalDateTime createdAt;
     @Column(name = "approved") private Boolean approved;
-    @Column(name = "approved_by") private Long approvedBy;
+    @Column(name = "approved_by") private Integer approvedBy;
     @Column(name = "approved_at") private LocalDateTime approvedAt;
 }

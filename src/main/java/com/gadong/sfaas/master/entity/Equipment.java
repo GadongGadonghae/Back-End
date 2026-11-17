@@ -11,6 +11,6 @@ public class Equipment {
     @Column(name = "process_id") private String processId;
     /** 공용 설비(도장·검사)는 null */
     @Column(name = "line_id") private String lineId;
-    @Column(name = "seq_no") private Integer seqNo;
+    @Column(name = "seq_no") private Short seqNo;
     @Column(name = "is_active") private Boolean active;
 }

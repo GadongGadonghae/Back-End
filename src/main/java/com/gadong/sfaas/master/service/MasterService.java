@@ -27,14 +27,12 @@ public class MasterService {
     public List<LineResponse> lines() {
         return lineRepository.findAll().stream()
                 .sorted(Comparator.comparing(l -> l.getLineId()))
-                .map(l -> new LineResponse(l.getLineId(), l.getPaintEquipmentId(), l.getPaintEquipmentId()))
+                .map(l -> new LineResponse(l.getLineId(), l.getDefaultPaintId(), l.getCurrentPaintId()))
                 .toList();
     }
 
     public List<EquipmentResponse> equipments(String lineId, String process) {
-        if (lineId != null && !lineRepository.existsByLineId(lineId)) {
-            throw new BusinessException(ErrorCode.LINE_NOT_FOUND, "라인 " + lineId + "를 찾을 수 없습니다");
-        }
+        requireLine(lineId);
         return equipmentRepository.findAll().stream()
                 .filter(e -> Boolean.TRUE.equals(e.getActive()))
                 .filter(e -> lineId == null || lineId.equals(e.getLineId()))
@@ -43,12 +41,19 @@ public class MasterService {
                         .thenComparing(Equipment::getProcessId)
                         .thenComparing(e -> e.getSeqNo() == null ? 0 : e.getSeqNo()))
                 .map(e -> new EquipmentResponse(e.getEquipmentId(), e.getEquipmentName(), e.getLineId(),
-                        e.getProcessId(), dataSource(e)))
+                        e.getProcessId()))
                 .toList();
     }
 
-    /** 수집 경로: 슬리팅은 PLC(Modbus), 나머지는 Python OPC UA 가상 설비. DB에 컬럼이 없어 공정으로 정해요. */
-    private static String dataSource(Equipment e) {
-        return "SLITTING".equalsIgnoreCase(e.getProcessId()) ? "MODBUS" : "OPCUA";
+    /** lineId 쿼리를 받는 API 공통: 없는 라인이면 LINE_NOT_FOUND. null(전체)은 통과 */
+    public void requireLine(String lineId) {
+        if (lineId != null && !lineRepository.existsByLineId(lineId)) {
+            throw new BusinessException(ErrorCode.LINE_NOT_FOUND, "라인 " + lineId + "를 찾을 수 없습니다");
+        }
+    }
+
+    public Equipment equipment(String equipmentId) {
+        return equipmentRepository.findById(equipmentId).orElseThrow(() ->
+                new BusinessException(ErrorCode.EQUIPMENT_NOT_FOUND, "설비 " + equipmentId + "를 찾을 수 없습니다"));
     }
 }

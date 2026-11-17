@@ -34,9 +34,9 @@ public class AlarmController {
         return service.activeAlarms(lineId);
     }
 
-    @Operation(summary = "M-05 알람 이력", description = "P1")
+    @Operation(summary = "M-05 알람 이력", description = "P1. occurredAt 최신순")
     @GetMapping
-    public PageResponse<AlarmResponse> alarms(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+    public PageResponse<AlarmHistoryResponse> alarms(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                               @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                               @RequestParam(required = false) String equipmentId,
                                               @RequestParam(defaultValue = "0") int page,
@@ -44,13 +44,13 @@ public class AlarmController {
         return service.alarms(from, to, equipmentId, page, size);
     }
 
-    @Operation(summary = "M-06 알람 확인 처리", description = "P2")
+    @Operation(summary = "M-06 알람 확인 처리", description = "P2. 본문 ackUserId 는 확인한 사용자 번호예요. 이미 확인한 알람은 처음 기록을 유지해요.")
     @PatchMapping("/{alarmId}/ack")
-    public AckResponse ack(@PathVariable long alarmId, @RequestBody AckRequest request) {
+    public AckResponse ack(@PathVariable long alarmId, @RequestBody(required = false) AckRequest request) {
         return service.ack(alarmId, request);
     }
 
-    @Operation(summary = "M-10 알람 기준치 조회", description = "P1. threshold 테이블. 기준치는 설비별이라 응답의 equipmentId 로 구분해요.")
+    @Operation(summary = "M-10 알람 기준치 조회", description = "P1. threshold 테이블(설비별 기준치). process, equipmentId 로 좁혀요.")
     @GetMapping("/thresholds")
     public List<ThresholdResponse> thresholds(@RequestParam(required = false) String process,
                                               @RequestParam(required = false) String equipmentId) {
@@ -59,7 +59,7 @@ public class AlarmController {
 
     @Operation(summary = "M-11 알람 기준치 수정", description = "P1")
     @PutMapping("/thresholds/{id}")
-    public ThresholdUpdateResponse updateThreshold(@PathVariable long id, @RequestBody ThresholdUpdateRequest request) {
+    public ThresholdUpdateResponse updateThreshold(@PathVariable int id, @RequestBody ThresholdUpdateRequest request) {
         return service.updateThreshold(id, request);
     }
 }
