@@ -12,7 +12,7 @@ final class ProcessData {
 
     static final List<Table> TABLES = List.of(
             new Table("SLITTING", "slitting_data", List.of("torque", "current", "voltage")),
-            new Table("PRESS", "press_data", List.of("pressure_left", "pressure_right", "press_time", "pressure_total")),
+            new Table("PRESS", "press_data", List.of("pressure_left", "pressure_right", "pressure_diff", "press_time", "pressure_total")),
             new Table("WELDING", "welding_data", List.of("press_force", "current", "voltage", "weld_time")),
             new Table("PAINTING", "painting_data", List.of("ph", "temperature", "current", "voltage")));
 

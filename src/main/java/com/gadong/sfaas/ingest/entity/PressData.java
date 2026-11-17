@@ -11,10 +11,14 @@ import lombok.NoArgsConstructor;
 public class PressData {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) @Column(name = "id") private Long id;
     @Column(name = "equipment_id") private String equipmentId;
+    /** 제품 번호. Node-RED가 넣어요 (값이 없을 수 있음) */
+    @Column(name = "product_id", length = 30) private String productId;
     @Column(name = "measured_at") private LocalDateTime measuredAt;
     @Column(name = "pressure_left") private BigDecimal pressureLeft;
     @Column(name = "pressure_right") private BigDecimal pressureRight;
     @Column(name = "press_time") private BigDecimal pressTime;
     @Column(name = "pressure_total") private BigDecimal pressureTotal;
+    /** 좌 − 우 압력 차 (PR3 판정 항목) */
+    @Column(name = "pressure_diff") private BigDecimal pressureDiff;
     @Column(name = "result") private String result;
 }
