@@ -15,11 +15,13 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /** H2(메모리 DB)에 v0.3.2 모양 데이터를 넣고 모니터링 API(M-01~M-06, M-08~M-12, E-01)를 확인해요. */
 @SpringBootTest
+@WithMockUser(username = "testuser", roles = "MANAGER") // API는 로그인 필요 (SecurityConfig)
 @AutoConfigureMockMvc
 @Transactional
 class MonitoringApiTest {
