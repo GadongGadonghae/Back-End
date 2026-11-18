@@ -76,6 +76,39 @@ class JudgeServiceTest {
         verify(pushService, never()).pushStatus(any());
     }
 
+    @Test
+    void statusJudge_followsPriority_andLinksDowntime() {
+        // A-PR1 고장 신호, A-PR4 신호 없음, A-WD 신호 정상 + 앞(프레스) OK 1 − 용접 2 → 재공 없음
+        jdbc.update("insert into equipment_signal(equipment_id, last_seen_at, fault) values ('A-PR1', CURRENT_TIMESTAMP, 1), ('A-WD', CURRENT_TIMESTAMP, 0)");
+        processJudge.judge();
+        statusJudge.judge();
+        assertThat(status("A-PR1")).isEqualTo("D");
+        assertThat(status("A-PR4")).isEqualTo("DC");
+        assertThat(status("A-WD")).isEqualTo("I");
+        assertThat(jdbc.queryForList("select code from downtime_event where ended_at is null order by equipment_id", String.class))
+                .containsExactly("UP_BREAKDOWN", "UP_SHORTAGE");
+
+        // 용접 앞에 OK 프레스 2개가 더 오면 R, 대기 이벤트는 닫혀요
+        jdbc.update("insert into press_data(equipment_id, measured_at, pressure_left, pressure_right, pressure_diff, press_time, result) values "
+                + "('A-PR4', CURRENT_TIMESTAMP, 1, 1, 1, 1, 'OK'), ('A-PR4', CURRENT_TIMESTAMP, 1, 1, 1, 1, 'OK')");
+        statusJudge.judge();
+        assertThat(status("A-WD")).isEqualTo("R");
+        assertThat(jdbc.queryForObject("select count(*) from downtime_event where code = 'UP_SHORTAGE' and ended_at is not null", Integer.class)).isEqualTo(1);
+
+        // 계획정지(S-02가 만든 이벤트)가 있으면 S로 그 이벤트에 연결, 고장(D)이 우선
+        jdbc.update("insert into downtime_event(equipment_id, status, code, started_at, stop_group_id) values "
+                + "('A-WD','S','PL_TEST', DATEADD('MINUTE', -1, CURRENT_TIMESTAMP), 1), ('A-PR1','S','PL_TEST', DATEADD('MINUTE', -1, CURRENT_TIMESTAMP), 1)");
+        statusJudge.judge();
+        assertThat(status("A-WD")).isEqualTo("S");
+        assertThat(status("A-PR1")).isEqualTo("D");
+        assertThat(jdbc.queryForObject("select d.code from equipment_status_history h join downtime_event d on d.downtime_id = h.downtime_id"
+                + " where h.equipment_id = 'A-WD' and h.ended_at is null", String.class)).isEqualTo("PL_TEST");
+    }
+
+    private String status(String id) {
+        return jdbc.queryForObject("select trim(status) from equipment_status_history where equipment_id = ? and ended_at is null", String.class, id);
+    }
+
     private int historyCount() {
         return jdbc.queryForObject("select count(*) from equipment_status_history", Integer.class);
     }
