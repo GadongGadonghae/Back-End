@@ -2,6 +2,7 @@ package com.gadong.sfaas.judge.service;
 
 import com.gadong.sfaas.global.util.Kst;
 import com.gadong.sfaas.monitoring.dto.MonitoringDtos.EquipmentStatusResponse;
+import com.gadong.sfaas.monitoring.service.FlowStats;
 import com.gadong.sfaas.monitoring.service.MonitoringService;
 import com.gadong.sfaas.push.PushService;
 import java.time.LocalDateTime;
@@ -23,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class StatusJudgeService {
     static final long DC_SECONDS = 10;
-    private static final List<String> PRESS_STAGES = List.of("pressure_left", "pressure_right", "pressure_diff", "press_time");
+    private static final List<String> PRESS_STAGES = List.of("pressure_left", "pressure_right", "pressure_diff", "press_time"); // 단 수만 써요
 
     record Decision(String status, String code, Long plannedEventId) {}
 
@@ -36,11 +37,13 @@ public class StatusJudgeService {
     private final NamedParameterJdbcTemplate jdbc;
     private final MonitoringService monitoringService;
     private final PushService pushService;
+    private final FlowStats flow;
 
-    public StatusJudgeService(NamedParameterJdbcTemplate jdbc, MonitoringService monitoringService, PushService pushService) {
+    public StatusJudgeService(NamedParameterJdbcTemplate jdbc, MonitoringService monitoringService, PushService pushService, FlowStats flow) {
         this.jdbc = jdbc;
         this.monitoringService = monitoringService;
         this.pushService = pushService;
+        this.flow = flow;
     }
 
     @Transactional
@@ -118,63 +121,38 @@ public class StatusJudgeService {
     }
 
     /**
-     * 설비마다 "앞에서 넘어와 아직 이 설비가 끝내지 못한 제품 수" = 앞 설비 OK 수 − 이 설비가 끝낸 수.
-     * 이 설비 안에서 처리 중인 제품과 앞에서 기다리는 재공을 합친 수라서 0이면 처리할 게 없는 대기(I)예요.
-     * (화면 재공 M-13은 여기서 처리 중 1개를 빼고 보여 줘요)
-     * shortcut: 행 수로 세서 막 시작한 제품·멈춘 제품을 구분 못 해요, DB에 설비별 started_at/ended_at이 생기면 그 컬럼으로 바꿔요
+     * 설비마다 "처리 중 + 앞에서 기다리는 제품" 수 (product_flow). 0이면 처리할 게 없는 대기(I)예요.
+     * 앞 = 슬리팅은 코일 재고, PRn은 같은 라인 PR(n-1) 뒤, 프레스 PR1은 슬리팅 뒤, 용접은 PR4 뒤,
+     * 도장은 지금 이 도장으로 가는 라인들의 용접 뒤, 검사는 모든 도장 뒤
      */
     Map<String, Long> upstream(List<Equipment> equipment) {
-        Map<String, Long> slitOk = byLine("SELECT e.line_id, SUM(CASE WHEN x.result = 'OK' THEN 1 ELSE 0 END) FROM slitting_data x"
-                + " JOIN equipment e ON e.equipment_id = x.equipment_id GROUP BY e.line_id");
-        Map<String, Long> pressRows = byLine("SELECT e.line_id, COUNT(*) FROM press_data x JOIN equipment e ON e.equipment_id = x.equipment_id GROUP BY e.line_id");
-        Map<String, Long> pressOk = byLine("SELECT e.line_id, SUM(CASE WHEN x.result = 'OK' THEN 1 ELSE 0 END) FROM press_data x"
-                + " JOIN equipment e ON e.equipment_id = x.equipment_id GROUP BY e.line_id");
-        Map<String, Long> weldRows = byLine("SELECT e.line_id, COUNT(*) FROM welding_data x JOIN equipment e ON e.equipment_id = x.equipment_id GROUP BY e.line_id");
-        Map<String, Long> weldOk = byLine("SELECT e.line_id, SUM(CASE WHEN x.result = 'OK' THEN 1 ELSE 0 END) FROM welding_data x"
-                + " JOIN equipment e ON e.equipment_id = x.equipment_id GROUP BY e.line_id");
-        Map<String, Long> paintRowsByLine = byLine("SELECT line_id, COUNT(*) FROM painting_data WHERE line_id IS NOT NULL GROUP BY line_id");
-        Map<String, Long> routeCount = new HashMap<>(); // 도장 설비 → 지금 그 도장으로 가는 라인들의 용접→도장 대기 합
-        jdbc.query("SELECT line_id, current_paint_id FROM line", Map.of(), rs -> {
-            String line = rs.getString(1);
-            long waiting = Math.max(0, weldOk.getOrDefault(line, 0L) - paintRowsByLine.getOrDefault(line, 0L));
-            routeCount.merge(rs.getString(2), waiting, Long::sum);
-        });
-        long paintOk = count("SELECT COUNT(*) FROM painting_data WHERE result = 'OK'");
-        long inspected = count("SELECT COUNT(*) FROM inspection_result");
-        long coil = count("SELECT COALESCE(SUM(product_qty), 0) FROM coil_receipt") - count("SELECT COUNT(*) FROM slitting_data");
-        // 프레스 PR2~PR4: 앞 단 칸은 찼고 이 단 칸은 비었고 NG로 폐기되지 않은 행
-        Map<Integer, Map<String, Long>> stageWaiting = new HashMap<>();
-        for (int n = 2; n <= PRESS_STAGES.size(); n++) {
-            stageWaiting.put(n, byLine("SELECT e.line_id, COUNT(*) FROM press_data x JOIN equipment e ON e.equipment_id = x.equipment_id"
-                    + " WHERE x." + PRESS_STAGES.get(n - 2) + " IS NOT NULL AND x." + PRESS_STAGES.get(n - 1) + " IS NULL"
-                    + " AND (x.result IS NULL OR x.result <> 'NG') GROUP BY e.line_id"));
+        Map<String, Long> after = new HashMap<>(); // "공정|단|라인" 뒤 재공
+        long paintBehind = 0;
+        for (FlowStats.Waiting w : flow.waiting()) {
+            after.merge(w.process() + "|" + ("PRESS".equals(w.process()) ? w.seq() : 0) + "|" + w.lineId(), w.qty(), Long::sum);
+            if ("PAINTING".equals(w.process())) paintBehind += w.qty();
         }
+        Map<String, Long> weldBehindByPaint = new HashMap<>();
+        jdbc.query("SELECT line_id, current_paint_id FROM line", Map.of(), rs -> {
+            weldBehindByPaint.merge(rs.getString(2), after.getOrDefault("WELDING|0|" + rs.getString(1), 0L), Long::sum);
+        });
+        long coil = flow.coilWaiting();
+        Map<String, Long> busy = flow.inProcess();
+        int lastStage = PRESS_STAGES.size();
 
         Map<String, Long> out = new HashMap<>();
         for (Equipment e : equipment) {
             String l = e.lineId();
-            long v = switch (e.process()) {
-                case "SLITTING" -> coil; // 코일은 라인 구분이 없어 공장 전체 재고로 봐요
-                case "PRESS" -> e.seq() <= 1 ? slitOk.getOrDefault(l, 0L) - pressRows.getOrDefault(l, 0L)
-                        : stageWaiting.getOrDefault(e.seq(), Map.of()).getOrDefault(l, 0L);
-                case "WELDING" -> pressOk.getOrDefault(l, 0L) - weldRows.getOrDefault(l, 0L);
-                case "PAINTING" -> routeCount.getOrDefault(e.id(), 0L);
-                case "INSPECTION" -> paintOk - inspected;
+            long waiting = switch (e.process()) {
+                case "SLITTING" -> coil;
+                case "PRESS" -> e.seq() <= 1 ? after.getOrDefault("SLITTING|0|" + l, 0L) : after.getOrDefault("PRESS|" + (e.seq() - 1) + "|" + l, 0L);
+                case "WELDING" -> after.getOrDefault("PRESS|" + lastStage + "|" + l, 0L);
+                case "PAINTING" -> weldBehindByPaint.getOrDefault(e.id(), 0L);
+                case "INSPECTION" -> paintBehind;
                 default -> 1L; // 모르는 공정은 대기로 보지 않아요
             };
-            out.put(e.id(), v);
+            out.put(e.id(), waiting + busy.getOrDefault(e.id(), 0L));
         }
         return out;
-    }
-
-    private Map<String, Long> byLine(String sql) {
-        Map<String, Long> m = new HashMap<>();
-        jdbc.query(sql, Map.of(), rs -> { m.put(rs.getString(1), rs.getLong(2)); });
-        return m;
-    }
-
-    private long count(String sql) {
-        Long v = jdbc.queryForObject(sql, Map.of(), Long.class);
-        return v == null ? 0 : v;
     }
 }

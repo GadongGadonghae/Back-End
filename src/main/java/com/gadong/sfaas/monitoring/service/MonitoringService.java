@@ -103,7 +103,7 @@ public class MonitoringService {
         Equipment equipment = masterService.equipment(equipmentId);
         Optional<ProcessData.Table> table = ProcessData.of(equipment.getProcessId());
         if (table.isEmpty()) return new MetricsResponse(equipmentId, List.of()); // 검사기는 측정 항목이 없어요
-        // 프레스는 한 행을 PR1~PR4가 이어서 채우고 equipment_id가 마지막 단으로 바뀌어요 → 그 라인 행에서 이 단의 칸만 봐요
+        // 프레스는 제품 1행을 PR1~PR4가 이어서 채워요 → 이 단의 칸만 보고, 점 시각은 이 단에서 나온 시각(product_flow)
         String stage = "PRESS".equals(equipment.getProcessId()) && equipment.getSeqNo() != null
                 && equipment.getSeqNo() >= 1 && equipment.getSeqNo() <= ProcessData.PRESS_STAGES.size()
                 ? ProcessData.PRESS_STAGES.get(equipment.getSeqNo() - 1) : null;
@@ -113,14 +113,15 @@ public class MonitoringService {
 
         Map<String, Threshold> limits = thresholdRepository.findByEquipmentId(equipmentId).stream()
                 .collect(Collectors.toMap(Threshold::getItemName, Function.identity(), (a, b) -> a));
-        // shortcut: 프레스 행은 단이 쓸 때마다 measured_at이 바뀌어 점 시각은 그 제품의 마지막 단 시각이에요(PR4만 정확). 단별 시각 컬럼이 생기면 그걸로 바꿔요
-        String where = stage == null ? "equipment_id = :eq"
-                : "equipment_id IN (SELECT equipment_id FROM equipment WHERE line_id = :line AND process_id = 'PRESS') AND " + stage + " IS NOT NULL";
-        MapSqlParameterSource p = new MapSqlParameterSource().addValue("eq", equipmentId).addValue("line", equipment.getLineId())
+        MapSqlParameterSource p = new MapSqlParameterSource().addValue("eq", equipmentId)
                 .addValue("from", Kst.start(from)).addValue("to", Kst.endExclusive(to));
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT measured_at, result, " + String.join(", ", columns) + " FROM " + table.get().name()
-                        + " WHERE " + where + " AND measured_at >= :from AND measured_at < :to ORDER BY measured_at", p);
+        String cols = columns.stream().map(c -> "x." + c).collect(Collectors.joining(", "));
+        List<Map<String, Object>> rows = jdbc.queryForList(stage == null
+                ? "SELECT x.measured_at, x.result, " + cols + " FROM " + table.get().name() + " x"
+                        + " WHERE x.equipment_id = :eq AND x.measured_at >= :from AND x.measured_at < :to ORDER BY x.measured_at"
+                : "SELECT f.ended_at AS measured_at, x.result, " + cols + " FROM press_data x"
+                        + " JOIN product_flow f ON f.product_id = x.product_id AND f.equipment_id = :eq"
+                        + " WHERE x." + stage + " IS NOT NULL AND f.ended_at >= :from AND f.ended_at < :to ORDER BY f.ended_at", p);
 
         List<MetricsResponse.Series> series = new ArrayList<>();
         for (String c : columns) {

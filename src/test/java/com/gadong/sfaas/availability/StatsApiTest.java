@@ -95,25 +95,42 @@ class StatsApiTest {
     }
 
     @Test
-    void m13WipIsPreviousOkMinusNextRows() throws Exception {
+    void m13WipFromProductFlow() throws Exception {
+        // 라인 A 제품마다 마지막 이동 기록: 끝났으면(ended_at) 그 설비 뒤 재공, 처리 중이면 재공 아님, 공정 NG면 제외
+        jdbc.batchUpdate(
+                "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values ('A-PR4','프레스A-4','PRESS','A',4,true)",
+                "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
+                        + "('A-01','A-SL','A','2026-11-10 08:00:00','2026-11-10 08:00:16'), ('A-01','A-PR1','A','2026-11-10 08:00:20','2026-11-10 08:00:37'), "
+                        + "('A-01','A-PR4','A','2026-11-10 08:01:30','2026-11-10 08:01:47'), ('A-01','A-WD','A','2026-11-10 08:01:50','2026-11-10 08:02:07'), " // 용접 뒤 1
+                        + "('A-02','A-SL','A','2026-11-10 08:00:16','2026-11-10 08:00:32'), ('A-02','A-PR4','A','2026-11-10 08:02:00','2026-11-10 08:02:17'), " // PR4 뒤 1
+                        + "('A-03','A-SL','A','2026-11-10 08:00:32','2026-11-10 08:00:48'), ('A-03','A-PR1','A','2026-11-10 08:02:20',null), " // PR1 처리 중
+                        + "('A-04','A-SL','A','2026-11-10 08:00:48','2026-11-10 08:01:04'), " // 슬리팅 뒤 1
+                        + "('A-05','A-SL','A','2026-11-10 08:02:30',null), " // 슬리팅 처리 중
+                        + "('A-06','A-SL','A','2026-11-10 08:01:04','2026-11-10 08:01:20'), " // 슬리팅 NG → 폐기
+                        + "('A-07','PT1','A','2026-11-10 08:03:00','2026-11-10 08:03:04'), " // 도장 뒤 1
+                        + "('B-01','PT1','B','2026-11-10 08:03:04','2026-11-10 08:03:08'), ('B-01','VI','B','2026-11-10 08:03:10',null)", // 검사 중
+                "insert into slitting_data(product_id, equipment_id, measured_at, result) values ('A-06','A-SL','2026-11-10 08:01:20','NG')");
+
         mvc.perform(get("/api/production/wip"))
                 .andExpect(jsonPath("$[0].process").value("COIL"))
                 .andExpect(jsonPath("$[0].nextProcess").value("SLITTING"))
-                .andExpect(jsonPath("$[0].wipQty").value(35)) // 코일 40개 − 슬리팅 5
+                .andExpect(jsonPath("$[0].wipQty").value(34)) // 코일 40개 − 슬리팅에 들어간 6개(처리 중 포함)
                 .andExpect(jsonPath("$[1].process").value("SLITTING"))
-                .andExpect(jsonPath("$[1].wipQty").value(2)) // 슬리팅 OK 5 − 프레스 3
+                .andExpect(jsonPath("$[1].wipQty").value(1)) // A-04 (A-03은 PR1 처리 중, A-06은 NG)
                 .andExpect(jsonPath("$[2].process").value("PRESS"))
-                .andExpect(jsonPath("$[2].wipQty").value(1)) // 프레스 OK 2 − 용접 1
+                .andExpect(jsonPath("$[2].wipQty").value(1)) // A-02
                 .andExpect(jsonPath("$[3].process").value("WELDING"))
-                .andExpect(jsonPath("$[3].wipQty").value(0)) // 용접 OK 1 − 도장 1
+                .andExpect(jsonPath("$[3].wipQty").value(1)) // A-01
                 .andExpect(jsonPath("$[4].process").value("PAINTING"))
                 .andExpect(jsonPath("$[4].nextProcess").value("INSPECTION"))
-                .andExpect(jsonPath("$[4].wipQty").value(0)); // 음수는 0
-        mvc.perform(get("/api/production/wip").param("lineId", "A"))
+                .andExpect(jsonPath("$[4].wipQty").value(1)); // A-07 (B-01은 검사 중)
+        mvc.perform(get("/api/production/wip").param("lineId", "B"))
                 .andExpect(jsonPath("$.length()").value(4)) // 코일은 라인 구분이 없어 빠져요
-                .andExpect(jsonPath("$[0].process").value("SLITTING"))
-                .andExpect(jsonPath("$[0].wipQty").value(2))
-                .andExpect(jsonPath("$[2].wipQty").value(1)); // 용접 OK 1 − 라인 A 도장 0
+                .andExpect(jsonPath("$[0].wipQty").value(0))
+                .andExpect(jsonPath("$[3].wipQty").value(0));
+        mvc.perform(get("/api/production/wip").param("paintId", "PT1"))
+                .andExpect(jsonPath("$[0].wipQty").value(1)) // A·B 모두 PT1로 가요: A-01
+                .andExpect(jsonPath("$[1].wipQty").value(1)); // A-07
     }
 
     @Test
