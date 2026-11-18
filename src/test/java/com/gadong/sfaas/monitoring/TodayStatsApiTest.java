@@ -1,0 +1,99 @@
+package com.gadong.sfaas.monitoring;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
+
+/** M-15 설비별 사이클 수·평균 CT, M-03 프레스 단별 그래프, M-13 도장 설비별 재공 */
+@SpringBootTest
+@WithMockUser(username = "testuser", roles = "MANAGER") // API는 로그인 필요 (SecurityConfig)
+@AutoConfigureMockMvc
+@Transactional
+class TodayStatsApiTest {
+
+    private static final String DAY = "2026-11-10";
+
+    @Autowired MockMvc mvc;
+    @Autowired JdbcTemplate jdbc;
+
+    @BeforeEach
+    void seed() {
+        jdbc.batchUpdate(
+                "insert into process(process_id, process_name, seq) values ('PRESS','프레스',3), ('WELDING','용접',4)",
+                "insert into line(line_id, line_name, default_paint_id, current_paint_id) values ('A','A라인','PT1','PT1'), ('B','B라인','PT1','PT1')",
+                "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values "
+                        + "('A-PR1','프레스A-1','PRESS','A',1,true), ('A-PR4','프레스A-4','PRESS','A',4,true), ('A-WD','용접A','WELDING','A',1,true)",
+                "insert into production_target(target_date, line_id, target_qty, created_at) values ('2026-11-10','A',240,'2026-11-09 18:00:00')",
+                "insert into inspection_result(inspection_id, equipment_id, product_id, line_id, paint_equipment_id, result, inspected_at) values "
+                        + "(1,'VI','P-1','A','PT1','OK','2026-11-10 09:10:00'), (2,'VI','P-2','A','PT1','OK','2026-11-10 09:40:00'), "
+                        + "(3,'VI','P-3','A','PT1','NG','2026-11-10 09:50:00'), (4,'VI','P-4','A','PT1','OK','2026-11-10 11:05:00'), "
+                        + "(5,'VI','P-5','B','PT1','OK','2026-11-10 11:06:00')",
+                // 제품 3개: 첫 둘은 PR4까지, 마지막은 PR1만 지남. 제품 간격 17초
+                "insert into press_data(equipment_id, measured_at, pressure_left, pressure_right, pressure_diff, press_time) values "
+                        + "('A-PR4','2026-11-10 09:00:00',275,271,4,551), ('A-PR4','2026-11-10 09:00:17',276,272,4,550), "
+                        + "('A-PR1','2026-11-10 09:00:34',277,null,null,null)",
+                "insert into welding_data(equipment_id, measured_at, current) values "
+                        + "('A-WD','2026-11-10 09:00:00',15.0), ('A-WD','2026-11-10 09:00:20',15.0), ('A-WD','2026-11-10 09:00:40',15.0), "
+                        + "('A-WD','2026-11-10 10:00:00',15.0)"); // 1시간 멈춘 뒤 다시 1개
+    }
+
+    @Test
+    void cycles_perEquipmentAndPressStage() throws Exception {
+        mvc.perform(get("/api/monitoring/processes/WELDING/cycles").param("date", DAY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].equipmentId").value("A-WD"))
+                .andExpect(jsonPath("$[0].cycles").value(4))
+                .andExpect(jsonPath("$[0].avgCtMs").value(20000)); // 간격 중앙값이라 멈춘 1시간이 안 끼어요
+        mvc.perform(get("/api/monitoring/processes/PRESS/cycles").param("date", DAY).param("lineId", "A"))
+                .andExpect(jsonPath("$.length()").value(4))
+                .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
+                .andExpect(jsonPath("$[0].cycles").value(3))
+                .andExpect(jsonPath("$[0].avgCtMs").doesNotExist()) // PR1~PR3은 행 시각이 덮여서 CT를 못 구해요
+                .andExpect(jsonPath("$[3].equipmentId").value("A-PR4"))
+                .andExpect(jsonPath("$[3].cycles").value(2))
+                .andExpect(jsonPath("$[3].avgCtMs").value(17000)); // PR4 끝난 시각 간격
+        mvc.perform(get("/api/monitoring/processes/NOPE/cycles")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void pressMetrics_readOwnStageColumnAcrossLineRows() throws Exception {
+        // 행의 equipment_id가 A-PR4로 바뀌어 있어도 PR1 그래프는 라인의 좌 압력 3점
+        mvc.perform(get("/api/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY).param("interval", "raw"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.metrics.length()").value(1))
+                .andExpect(jsonPath("$.metrics[0].metric").value("pressureLeft"))
+                .andExpect(jsonPath("$.metrics[0].points.length()").value(3));
+        mvc.perform(get("/api/equipments/A-PR4/metrics").param("from", DAY).param("to", DAY).param("interval", "raw"))
+                .andExpect(jsonPath("$.metrics[0].metric").value("pressTime"))
+                .andExpect(jsonPath("$.metrics[0].points.length()").value(2));
+    }
+
+    @Test
+    void paintWip_beforeAndAfterOneBooth() throws Exception {
+        jdbc.batchUpdate(
+                "insert into process(process_id, process_name, seq) values ('PAINTING','도장',5)",
+                "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values "
+                        + "('B-WD','용접B','WELDING','B',1,true), ('PT2','도장-2','PAINTING',null,2,true)",
+                "update line set current_paint_id = 'PT2' where line_id = 'B'",
+                "insert into welding_data(equipment_id, measured_at, current, result) values "
+                        + "('B-WD','2026-11-10 09:00:00',15.0,'OK'), ('B-WD','2026-11-10 09:00:20',15.0,'OK')",
+                "insert into painting_data(equipment_id, line_id, measured_at, result) values ('PT2','B','2026-11-10 09:01:00','OK')");
+        mvc.perform(get("/api/production/wip").param("paintId", "PT2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].process").value("WELDING"))
+                .andExpect(jsonPath("$[0].wipQty").value(1)) // B 용접 OK 2 − B 도장 행 1 (A는 PT1으로 가서 빠짐)
+                .andExpect(jsonPath("$[1].process").value("PAINTING"))
+                .andExpect(jsonPath("$[1].wipQty").value(1)); // PT2 OK 1 − PT2 검사 0
+        mvc.perform(get("/api/production/wip").param("paintId", "A-WD")).andExpect(status().isBadRequest());
+    }
+}

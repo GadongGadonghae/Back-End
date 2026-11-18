@@ -4,6 +4,7 @@ import com.gadong.sfaas.global.response.PageResponse;
 import com.gadong.sfaas.monitoring.dto.MonitoringDtos.*;
 import com.gadong.sfaas.monitoring.service.MonitoringService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
 import java.util.List;
@@ -58,8 +59,10 @@ public class ProductionController {
     @Operation(summary = "M-13 공정별 재공품(WIP) 수량",
             description = "P1. 앞 공정 OK 행 수 − 다음 공정 행 수(누적). 코일입고는 coil_receipt.product_qty 합 − 슬리팅 행 수이고 lineId 를 주면 빠져요.")
     @GetMapping("/production/wip")
-    public List<WipResponse> wip(@RequestParam(required = false) String lineId) {
-        return service.wip(lineId);
+    public List<WipResponse> wip(@RequestParam(required = false) String lineId,
+                                 @Parameter(description = "도장 설비(PT1·PT2). 주면 그 도장의 앞(용접→도장)·뒤(도장→검사) 재공만 줘요")
+                                 @RequestParam(required = false) String paintId) {
+        return service.wip(lineId, paintId);
     }
 
     @Operation(summary = "E-01 설비 데이터 조회 (공정별 테이블의 사이클 단위 행)",
