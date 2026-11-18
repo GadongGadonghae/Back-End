@@ -78,7 +78,7 @@ class JudgeServiceTest {
 
     @Test
     void statusJudge_followsPriority_andLinksDowntime() {
-        // A-PR1 고장 신호, A-PR4 신호 없음, A-WD 신호 정상 + 앞(프레스) OK 1 − 용접 2 → 재공 없음
+        // A-PR1 고장 신호, A-PR4 신호 없음, A-WD 신호 정상 + 이동 기록 없음(처리 중도, 앞 재공도 없음) → 대기
         jdbc.update("insert into equipment_signal(equipment_id, last_seen_at, fault) values ('A-PR1', CURRENT_TIMESTAMP, 1), ('A-WD', CURRENT_TIMESTAMP, 0)");
         processJudge.judge();
         statusJudge.judge();
@@ -88,12 +88,17 @@ class JudgeServiceTest {
         assertThat(jdbc.queryForList("select code from downtime_event where ended_at is null order by equipment_id", String.class))
                 .containsExactly("UP_BREAKDOWN", "UP_SHORTAGE");
 
-        // 용접 앞에 OK 프레스 2개가 더 오면 R, 대기 이벤트는 닫혀요
-        jdbc.update("insert into press_data(equipment_id, measured_at, pressure_left, pressure_right, pressure_diff, press_time, result) values "
-                + "('A-PR4', CURRENT_TIMESTAMP, 1, 1, 1, 1, 'OK'), ('A-PR4', CURRENT_TIMESTAMP, 1, 1, 1, 1, 'OK')");
+        // PR4에서 나와 용접을 기다리는 제품이 생기면 R, 대기 이벤트는 닫혀요
+        jdbc.update("insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
+                + "('Z1', 'A-PR4', 'A', DATEADD('SECOND', -20, CURRENT_TIMESTAMP), DATEADD('SECOND', -3, CURRENT_TIMESTAMP))");
         statusJudge.judge();
         assertThat(status("A-WD")).isEqualTo("R");
         assertThat(jdbc.queryForObject("select count(*) from downtime_event where code = 'UP_SHORTAGE' and ended_at is not null", Integer.class)).isEqualTo(1);
+
+        // 용접에 들어가 처리 중이면 앞 재공이 없어도 R
+        jdbc.update("insert into product_flow(product_id, equipment_id, line_id, started_at) values ('Z1', 'A-WD', 'A', CURRENT_TIMESTAMP)");
+        statusJudge.judge();
+        assertThat(status("A-WD")).isEqualTo("R");
 
         // 계획정지(S-02가 만든 이벤트)가 있으면 S로 그 이벤트에 연결, 고장(D)이 우선
         jdbc.update("insert into downtime_event(equipment_id, status, code, started_at, stop_group_id) values "

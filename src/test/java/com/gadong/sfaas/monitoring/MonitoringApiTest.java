@@ -47,9 +47,13 @@ class MonitoringApiTest {
                         + "('A-PR1','R','2026-11-10 09:00:00','2026-11-10 09:10:00',null), ('A-PR1','D','2026-11-10 09:10:00',null,1), "
                         + "('A-PR2','I','2026-11-10 09:05:00',null,null), ('A-PR3','DC','2026-11-10 09:06:00',null,null), "
                         + "('B-PR1','R','2026-11-10 08:00:00',null,null), ('B-PR2','DC','2026-11-10 08:30:00',null,null)",
-                "insert into press_data(equipment_id, measured_at, pressure_left, pressure_right, press_time, pressure_total, result) values "
-                        + "('A-PR1','2026-11-10 09:00:01',275.0,271.3,551,546.3,'OK'), ('A-PR1','2026-11-10 09:00:03',287.0,271.0,552,558.0,'NG'), "
-                        + "('A-PR1','2026-11-10 09:00:07',280.0,270.0,550,550.0,'OK')",
+                "insert into press_data(product_id, equipment_id, measured_at, pressure_left, pressure_right, press_time, pressure_total, result) values "
+                        + "('A-1','A-PR1','2026-11-10 09:00:01',275.0,271.3,551,546.3,'OK'), ('A-2','A-PR1','2026-11-10 09:00:03',287.0,271.0,552,558.0,'NG'), "
+                        + "('A-3','A-PR1','2026-11-10 09:00:07',280.0,270.0,550,550.0,'OK')",
+                // 프레스 그래프 점 시각 = 그 단에서 나온 시각 (product_flow)
+                "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
+                        + "('A-1','A-PR1','A','2026-11-10 09:00:00','2026-11-10 09:00:01'), ('A-2','A-PR1','A','2026-11-10 09:00:02','2026-11-10 09:00:03'), "
+                        + "('A-3','A-PR1','A','2026-11-10 09:00:06','2026-11-10 09:00:07')",
                 "insert into threshold(threshold_id, equipment_id, item_name, item_label, unit, lower_limit, upper_limit, updated_at) values "
                         + "(3,'A-PR1','pressure_left','좌 압력','bar',270,285.3,'2026-11-01 00:00:00'), "
                         + "(4,'PT1','ph','pH',null,1.51,5.18,'2026-11-01 00:00:00')",

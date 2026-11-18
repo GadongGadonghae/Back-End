@@ -1,13 +1,32 @@
 -- =====================================================================
 -- 라인 가동 현황 모니터링 시스템 · DB 스키마 (PostgreSQL)
--- 1조 가동가동해 · 작성 2026-11-17 · v0.3.7
+-- 1조 가동가동해 · 작성 2026-11-18 · v0.3.9
 --
 -- 실행 방법:  psql -U postgres -d sfaas -f schema.sql
 -- 이 파일이 DB 구조의 "정답지"예요. 테이블을 바꿀 땐 이 파일을 고치고 GitHub에 올려요.
 -- 백엔드 JPA 설정은 spring.jpa.hibernate.ddl-auto=validate 로 맞춰주세요.
 --
--- ★ 현재 처리 시간 (v0.3.7, seed.sql): 슬리팅 16 · 프레스 17 (1대당, 라인에 4대) · 용접 17 · 도장 4 · 비전 검사 7초
---   라인 박자 18초. 비전 검사기가 병목이라 검사 앞에 재공이 쌓여요. 아래 버전별 기록의 처리 시간은 그때 값이에요.
+-- ★ 현재 처리 시간 (v0.3.9, seed.sql): 슬리팅 16 · 프레스 17 (1대당, 라인에 4대) · 용접 17 · 도장 4 · 비전 검사 7초
+--   라인 박자 16초. 비전 검사기가 병목이라 검사 앞에 재공이 쌓여요. 아래 버전별 기록의 처리 시간은 그때 값이에요.
+--
+-- v0.3.9 변경 (11/18 백엔드 요청: 설비마다 들어간·나간 시각 → 재공·처리 중·대기·CT·제품 추적)
+--   · 🆕 product_flow (공정 이동 기록): 제품이 설비 1대를 거칠 때마다 1줄. 들어갈 때 INSERT(started_at), 나갈 때 UPDATE(ended_at)
+--       프레스는 PR1~PR4가 각각 1줄. NG 폐기 제품은 그 설비 줄의 ended_at까지만 (다음 설비 줄 없음). line_id 항상 채움
+--   · 역할 나누기: 공정 테이블 = 측정값 + 판정 결과 (처리가 끝나 값이 있을 때만 씀) / product_flow = 이동 시각
+--       공정 테이블 구조는 v0.3.8 그대로 (시각 칸 추가 없음)
+--   · measured_at = 처리 끝난 시각으로 고정, 덮어쓰지 않음 (프레스는 PR1 끝난 시각). press_data.equipment_id = 마지막으로 끝낸 단
+--   · 공정 테이블 INSERT와 product_flow ended_at은 같은 시점·같은 시각 값 (Node-RED가 한 SQL 문장으로 씀)
+--   · 기존 DB는 alter_v0.3.9.sql
+--
+-- v0.3.8 변경 (11/17 백엔드 요청: 제품 하나를 공정 끝까지 추적)
+--   · 슬리팅 투입 때 product_id가 생기고(예: A-20261117-0001) 모든 공정 데이터에 같은 product_id가 붙어요
+--   · slitting_data, press_data, welding_data, painting_data에 product_id VARCHAR(30) UNIQUE 추가 (제품 1개 = 1줄)
+--   · press_data: 제품 1개 = 1줄. PR1 통과 때 INSERT, PR2~PR4는 같은 줄에 UPDATE
+--       PR1 = pressure_left, PR2 = pressure_right, PR3 = pressure_diff(🆕 칸), PR4 = press_time
+--       equipment_id·measured_at은 마지막으로 지난 프레스로 바뀌어요 (PR4면 프레스 완료)
+--       값이 붙을 때마다 Node-RED가 result를 비워서 백엔드가 다시 판정해요 (NG면 그대로 둠)
+--   · painting_data: 제품이 도장조에 담길 때의 용액 상태를 product_id와 함께 1줄로
+--   · grants.sql: Node-RED에 press_data 고쳐 쓰기(UPDATE) 권한 추가
 --
 -- v0.3.7 변경 (11/17): 프레스를 1대당 17초로 바로잡음 (v0.3.6의 "4대 합쳐 17초"는 잘못 전달된 값)
 --
@@ -54,7 +73,7 @@
 
 -- 다시 실행해도 되도록 기존 테이블을 지우고 새로 만들어요. (데이터도 같이 지워짐!)
 DROP TABLE IF EXISTS inspection, status_log, downtime,   -- v0.3까지의 예전 이름
-    equipment_signal, chat_message, alarm, paint_route_history,
+    product_flow, equipment_signal, chat_message, alarm, paint_route_history,
     reassignment_detail, reassignment_report, downtime_event, equipment_status_history,
     inspection_result, painting_data, welding_data, press_data, slitting_data, coil_receipt,
     production_target, threshold, users, downtime_code, equipment, line, process CASCADE;
@@ -86,7 +105,7 @@ CREATE TABLE line (
 -- ID 규칙(API 명세서): A-SL / A-PR1~4 / A-WD, 공용: PT1, PT2, VI
 CREATE TABLE equipment (
     equipment_id    VARCHAR(20) PRIMARY KEY,        -- 코드용 ID. 예: 'A-PR1'
-    equipment_name  VARCHAR(30) NOT NULL UNIQUE,    -- 화면 표시명. 예: '프레스A-1'
+    equipment_name  VARCHAR(30) NOT NULL UNIQUE,    -- 화면 표시명. 예: 'A라인 프레스 1호기'
     process_id      VARCHAR(12) NOT NULL REFERENCES process(process_id),
     line_id         VARCHAR(5)  REFERENCES line(line_id),  -- 공용 설비(도장·검사)는 NULL
     seq_no          SMALLINT    NOT NULL,           -- 같은 라인·공정 안의 번호 (프레스 1~4)
@@ -124,7 +143,7 @@ CREATE TABLE users (
 CREATE TABLE threshold (
     threshold_id  SERIAL      PRIMARY KEY,
     equipment_id  VARCHAR(20) NOT NULL REFERENCES equipment(equipment_id),
-    item_name     VARCHAR(30) NOT NULL,             -- 수집 테이블의 컬럼명과 같게. 예: 'pressure_left'
+    item_name     VARCHAR(30) NOT NULL,             -- 수집 테이블의 컬럼명과 같게. 예: 'pressure_left'. 예: 'pressure_diff'(압력 차, PR3)
     item_label    VARCHAR(30) NOT NULL,             -- 화면 표시명. 예: '좌 압력'
     unit          VARCHAR(10),
     lower_limit   NUMERIC(12,3),
@@ -170,6 +189,7 @@ CREATE TABLE coil_receipt (
 -- 슬리팅 (실습 모터·인버터 PLC) ※ PLC 확정 후 컬럼 수정 예정
 CREATE TABLE slitting_data (
     id            BIGSERIAL   PRIMARY KEY,
+    product_id    VARCHAR(30) UNIQUE,               -- 제품 ID (슬리팅 투입 때 생김, 예: A-20261117-0001)
     equipment_id  VARCHAR(20) NOT NULL REFERENCES equipment(equipment_id),
     measured_at   TIMESTAMP   NOT NULL,             -- 생산시각
     torque        NUMERIC(10,3),
@@ -179,20 +199,24 @@ CREATE TABLE slitting_data (
 );
 
 -- 프레스 (KAMP 7번 프레스기)
+-- 제품 1개 = 1줄: PR1 통과 때 생기고(INSERT) PR2~PR4가 같은 줄에 값을 채워요(UPDATE). 아직 안 지난 프레스 값은 NULL
 CREATE TABLE press_data (
     id              BIGSERIAL   PRIMARY KEY,
-    equipment_id    VARCHAR(20) NOT NULL REFERENCES equipment(equipment_id),
-    measured_at     TIMESTAMP   NOT NULL,
-    pressure_left   NUMERIC(10,3),                  -- 좌 압력
-    pressure_right  NUMERIC(10,3),                  -- 우 압력
-    press_time      NUMERIC(10,3),                  -- 가압 시간 (단위 0.01초)
-    pressure_total  NUMERIC(10,3),                  -- 압력 합계
+    product_id      VARCHAR(30) UNIQUE,             -- 제품 ID (제품 1개 = 1줄)
+    equipment_id    VARCHAR(20) NOT NULL REFERENCES equipment(equipment_id),   -- 마지막으로 끝낸 단 (PR4면 프레스 완료)
+    measured_at     TIMESTAMP   NOT NULL,           -- PR1 끝난 시각 (v0.3.9: 고정, 덮어쓰지 않음. 단별 시각은 product_flow)
+    pressure_left   NUMERIC(10,3),                  -- 좌 압력 (PR1)
+    pressure_right  NUMERIC(10,3),                  -- 우 압력 (PR2)
+    pressure_diff   NUMERIC(10,3),                  -- 압력 차 좌−우 (PR3)
+    press_time      NUMERIC(10,3),                  -- 가압 시간 (PR4, 단위 0.01초)
+    pressure_total  NUMERIC(10,3),                  -- 압력 합계 (지금은 채우지 않음)
     result          VARCHAR(2)  CHECK (result IN ('OK', 'NG'))   -- 공정 판정: OK 양품 / NG 불량(폐기)
 );
 
 -- 용접 (KAMP 5번 스폿용접기)
 CREATE TABLE welding_data (
     id            BIGSERIAL   PRIMARY KEY,
+    product_id    VARCHAR(30) UNIQUE,               -- 제품 ID
     equipment_id  VARCHAR(20) NOT NULL REFERENCES equipment(equipment_id),
     measured_at   TIMESTAMP   NOT NULL,
     press_force   NUMERIC(10,3),                    -- 가압력
@@ -203,10 +227,12 @@ CREATE TABLE welding_data (
 );
 
 -- 도장 (KAMP 표면처리·도금욕 대체)
+-- 제품 단위: 제품이 도장조에 담길 때 그 순간의 용액 상태(pH·온도·전류·전압)를 1줄로. 기준 이탈이면 그 제품이 NG
 CREATE TABLE painting_data (
     id            BIGSERIAL   PRIMARY KEY,
+    product_id    VARCHAR(30) UNIQUE,               -- 제품 ID
     equipment_id  VARCHAR(20) NOT NULL REFERENCES equipment(equipment_id),
-    measured_at   TIMESTAMP   NOT NULL,             -- 용액상태 측정시각
+    measured_at   TIMESTAMP   NOT NULL,             -- 도장 끝난 시각 (들어간 시각은 product_flow)
     line_id       VARCHAR(5)  REFERENCES line(line_id),  -- 이 제품이 온 라인 (도장은 공용이라 꼭 채워주세요)
     ph            NUMERIC(6,3),
     temperature   NUMERIC(8,3),
@@ -237,6 +263,24 @@ CREATE INDEX idx_painting_line_time ON painting_data (line_id, measured_at);
 CREATE INDEX idx_inspection_result_line_time ON inspection_result (line_id, inspected_at);
 CREATE INDEX idx_coil_time        ON coil_receipt  (received_at);
 
+-- 🆕 v0.3.9 공정 이동 기록: 제품이 설비 1대를 거칠 때마다 1줄 (프레스는 PR1~PR4 각각 1줄)
+-- 들어갈 때 INSERT(started_at), 나갈 때 같은 줄 UPDATE(ended_at). 나갈 때는 공정 테이블 INSERT와 같은 시각 값
+-- 처리 중 = started_at 있음 + ended_at 없음 / 설비 사이 재공 = 앞 설비 ended_at 있음 + 다음 설비 줄 없음
+-- NG로 폐기된 제품은 그 설비 줄의 ended_at까지만 써요 (다음 설비 줄 없음). 코일 입고는 넣지 않아요
+CREATE TABLE product_flow (
+    flow_id       BIGSERIAL   PRIMARY KEY,
+    product_id    VARCHAR(30) NOT NULL,             -- 제품 ID (A-20261118-0001)
+    equipment_id  VARCHAR(20) NOT NULL REFERENCES equipment(equipment_id),
+    line_id       VARCHAR(5)  NOT NULL REFERENCES line(line_id),   -- 제품이 온 라인 = 제품 ID 앞자리 (도장·검사도 항상 채움)
+    started_at    TIMESTAMP,                        -- 설비에 들어간 시각
+    ended_at      TIMESTAMP,                        -- 설비에서 나간 시각 (NULL = 처리 중)
+    UNIQUE (product_id, equipment_id),              -- 한 제품은 한 설비를 한 번만 거쳐요
+    CHECK (ended_at IS NULL OR started_at IS NULL OR ended_at >= started_at)
+);
+CREATE INDEX idx_flow_open    ON product_flow (equipment_id) WHERE ended_at IS NULL;   -- 처리 중 조회용
+CREATE INDEX idx_flow_started ON product_flow (equipment_id, started_at);              -- CT·시간대 조회용
+CREATE INDEX idx_flow_line    ON product_flow (line_id, equipment_id);                 -- 라인별 재공용
+
 
 -- =====================================================================
 -- ④ 이벤트 · 이력 (Spring Boot가 판정해서 기록)
@@ -245,7 +289,7 @@ CREATE INDEX idx_coil_time        ON coil_receipt  (received_at);
 -- 상태 이력: 설비 상태가 바뀔 때마다 한 줄. 끝나지 않은 구간은 ended_at = NULL
 -- R 가동 · S 정지(계획) · I 대기 · D 고장/알람 · DC 통신 끊김
 -- ※ DC는 설비가 돌고 있을 수 있어서 가동률 계산에서는 "가동(R)"으로 봐요 (11/16 결정)
--- ※ I(대기) = 설비는 정상(생존 신호 수신 중)인데 처리할 제품이 없음 (재공 0). 슬리터는 runCoil = 0 (11/17)
+-- ※ I(대기) = 설비는 정상(생존 신호 수신 중)인데 처리할 제품이 없음 (재공 0). 슬리팅은 코일 재공(입고 product_qty 합 − 슬리팅 수)이 0일 때
 -- ※ DC = 생존 신호(heartbeat)가 10초 이상 끊김. I가 오래 이어져도 DC가 되지 않아요
 -- ※ 계획정지(S) 시간 안에서 난 고장은 손실로 세지 않아요 (11/16 결정)
 CREATE TABLE equipment_status_history (
@@ -355,7 +399,7 @@ CREATE TABLE reassignment_detail (
 -- ⑤ 기타
 -- =====================================================================
 
--- 채팅 (H-01 목록, H-02 전송): 공장 전체 채팅방 1개. 개발은 후순위(P3)
+-- 채팅 (H-01 목록, H-02 전송): 공장 전체 채팅방 1개. 개발은 P2
 CREATE TABLE chat_message (
     message_id  BIGSERIAL     PRIMARY KEY,
     sender_id   INTEGER       NOT NULL REFERENCES users(user_id),  -- 보낸 사람 (화면에는 users.user_name)

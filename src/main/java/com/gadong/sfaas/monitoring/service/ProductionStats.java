@@ -8,6 +8,7 @@ import com.gadong.sfaas.monitoring.dto.MonitoringDtos.ProductionCountsResponse;
 import com.gadong.sfaas.monitoring.dto.MonitoringDtos.WipResponse;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -36,10 +37,12 @@ public class ProductionStats {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final MasterService masterService;
+    private final FlowStats flow;
 
-    public ProductionStats(NamedParameterJdbcTemplate jdbc, MasterService masterService) {
+    public ProductionStats(NamedParameterJdbcTemplate jdbc, MasterService masterService, FlowStats flow) {
         this.jdbc = jdbc;
         this.masterService = masterService;
+        this.flow = flow;
     }
 
     /** [from, to] 일별 집계. lineId가 있으면 그 라인만 */
@@ -111,53 +114,39 @@ public class ProductionStats {
                 total == 0 ? 0 : Math.round(ok * 1000.0 / total) / 10.0, byGroup, byProcess);
     }
 
-    /** M-13. 재공품 = 앞 공정 OK 행 수 − 다음 공정 행 수(전체 누적). 코일입고는 coil_receipt.product_qty 합 − 슬리팅 행 수 */
+    /**
+     * M-13. 재공품 = 앞 공정 설비에서 나왔는데 다음 공정 설비에 아직 안 들어간 제품 수 (product_flow, 공정 NG 제외).
+     * 처리 중인 제품은 재공이 아니에요. 코일입고 → 슬리팅은 입고 제품 수 − 슬리팅에 들어간 수(전체 조회에만)
+     */
     public List<WipResponse> wip(String lineId) {
         masterService.requireLine(lineId);
-        MapSqlParameterSource p = new MapSqlParameterSource();
-        if (lineId != null) p.addValue("lineId", lineId);
-        String sum = "SELECT COUNT(*), COALESCE(SUM(CASE WHEN x.result = 'OK' THEN 1 ELSE 0 END), 0) FROM ";
-        long[] ok = new long[FLOW.size()], rows = new long[FLOW.size()];
-        for (int i = 1; i < FLOW.size(); i++) {
-            String process = FLOW.get(i);
-            long[] c;
-            if ("INSPECTION".equals(process)) {
-                c = count(sum + "inspection_result x WHERE 1 = 1" + lineFilter(lineId, "x.line_id"), p);
-            } else {
-                ProcessData.Table t = ProcessData.of(process).orElseThrow();
-                c = count(sum + t.name() + " x JOIN equipment e ON e.equipment_id = x.equipment_id WHERE 1 = 1"
-                        + lineFilter(lineId, "PAINTING".equals(process) ? "x.line_id" : "e.line_id"), p);
-            }
-            rows[i] = c[0];
-            ok[i] = c[1];
+        Map<String, Long> after = new HashMap<>(); // 공정 → 그 공정 뒤 재공
+        for (FlowStats.Waiting w : flow.waiting()) {
+            if (lineId != null && !lineId.equals(w.lineId())) continue;
+            if ("PRESS".equals(w.process()) && w.seq() != ProcessData.PRESS_STAGES.size()) continue; // 프레스 단 사이 재공은 M-13에 안 나와요
+            after.merge(w.process(), w.qty(), Long::sum);
         }
         List<WipResponse> wip = new ArrayList<>();
-        if (lineId == null) { // 코일은 라인 구분이 없어서 전체 조회에만 나와요
-            long received = jdbc.queryForObject("SELECT COALESCE(SUM(product_qty), 0) FROM coil_receipt", Map.of(), Long.class);
-            wip.add(new WipResponse("COIL", "SLITTING", (int) Math.max(0, received - rows[1])));
-        }
+        if (lineId == null) wip.add(new WipResponse("COIL", "SLITTING", (int) flow.coilWaiting()));
         for (int i = 1; i < FLOW.size() - 1; i++) {
-            wip.add(new WipResponse(FLOW.get(i), FLOW.get(i + 1), (int) Math.max(0, ok[i] - rows[i + 1])));
+            wip.add(new WipResponse(FLOW.get(i), FLOW.get(i + 1), after.getOrDefault(FLOW.get(i), 0L).intValue()));
         }
         return wip;
     }
 
     /**
      * M-13 paintId: 도장 설비 하나의 앞·뒤 재공 (판정 설계 v2 2절).
-     * 앞 = 지금 이 도장으로 가는 라인들의 용접→도장 재공 합, 뒤 = 이 도장 OK 수 − 이 도장을 거친 검사 행 수
+     * 앞 = 지금 이 도장으로 가는 라인들의 용접 뒤 재공 합, 뒤 = 이 도장에서 나와 검사를 기다리는 제품
      */
     public List<WipResponse> paintWip(String paintId) {
         if (!"PAINTING".equals(masterService.equipment(paintId).getProcessId())) throw invalid(paintId + "는 도장 설비가 아닙니다");
-        MapSqlParameterSource p = new MapSqlParameterSource("paintId", paintId);
-        long before = 0;
-        for (String line : jdbc.queryForList("SELECT line_id FROM line WHERE current_paint_id = :paintId", p, String.class)) {
-            before += wip(line).stream().filter(w -> "WELDING".equals(w.process())).mapToLong(WipResponse::wipQty).sum();
+        List<String> lines = jdbc.queryForList("SELECT line_id FROM line WHERE current_paint_id = :paintId", Map.of("paintId", paintId), String.class);
+        long before = 0, behind = 0;
+        for (FlowStats.Waiting w : flow.waiting()) {
+            if ("WELDING".equals(w.process()) && lines.contains(w.lineId())) before += w.qty();
+            if (paintId.equals(w.equipmentId())) behind += w.qty();
         }
-        long paintOk = count("SELECT COUNT(*), COALESCE(SUM(CASE WHEN x.result = 'OK' THEN 1 ELSE 0 END), 0)"
-                + " FROM painting_data x WHERE x.equipment_id = :paintId", p)[1];
-        long inspected = jdbc.queryForObject("SELECT COUNT(*) FROM inspection_result WHERE paint_equipment_id = :paintId", p, Long.class);
-        return List.of(new WipResponse("WELDING", "PAINTING", (int) before),
-                new WipResponse("PAINTING", "INSPECTION", (int) Math.max(0, paintOk - inspected)));
+        return List.of(new WipResponse("WELDING", "PAINTING", (int) before), new WipResponse("PAINTING", "INSPECTION", (int) behind));
     }
 
     private static String lineFilter(String lineId, String column) {

@@ -39,9 +39,16 @@ class TodayStatsApiTest {
                         + "(3,'VI','P-3','A','PT1','NG','2026-11-10 09:50:00'), (4,'VI','P-4','A','PT1','OK','2026-11-10 11:05:00'), "
                         + "(5,'VI','P-5','B','PT1','OK','2026-11-10 11:06:00')",
                 // 제품 3개: 첫 둘은 PR4까지, 마지막은 PR1만 지남. 제품 간격 17초
-                "insert into press_data(equipment_id, measured_at, pressure_left, pressure_right, pressure_diff, press_time) values "
-                        + "('A-PR4','2026-11-10 09:00:00',275,271,4,551), ('A-PR4','2026-11-10 09:00:17',276,272,4,550), "
-                        + "('A-PR1','2026-11-10 09:00:34',277,null,null,null)",
+                "insert into press_data(product_id, equipment_id, measured_at, pressure_left, pressure_right, pressure_diff, press_time) values "
+                        + "('X1','A-PR4','2026-11-10 08:59:17',275,271,4,551), ('X2','A-PR4','2026-11-10 08:59:34',276,272,4,550), "
+                        + "('X3','A-PR1','2026-11-10 08:59:51',277,null,null,null)",
+                // 단마다 들어간·나간 시각. PR1은 17초마다 3개, PR4는 2개 (PR2·PR3은 이 시드에 없음)
+                "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
+                        + "('X1','A-PR1','A','2026-11-10 08:59:00','2026-11-10 08:59:17'), ('X2','A-PR1','A','2026-11-10 08:59:17','2026-11-10 08:59:34'), "
+                        + "('X3','A-PR1','A','2026-11-10 08:59:34','2026-11-10 08:59:51'), "
+                        + "('X1','A-PR4','A','2026-11-10 09:00:00','2026-11-10 09:00:17'), ('X2','A-PR4','A','2026-11-10 09:00:17','2026-11-10 09:00:34'), "
+                        + "('W1','A-WD','A','2026-11-10 09:00:00','2026-11-10 09:00:17'), ('W2','A-WD','A','2026-11-10 09:00:20','2026-11-10 09:00:37'), "
+                        + "('W3','A-WD','A','2026-11-10 09:00:40','2026-11-10 09:00:57'), ('W4','A-WD','A','2026-11-10 10:00:00','2026-11-10 10:00:17')",
                 "insert into welding_data(equipment_id, measured_at, current) values "
                         + "('A-WD','2026-11-10 09:00:00',15.0), ('A-WD','2026-11-10 09:00:20',15.0), ('A-WD','2026-11-10 09:00:40',15.0), "
                         + "('A-WD','2026-11-10 10:00:00',15.0)"); // 1시간 멈춘 뒤 다시 1개
@@ -55,19 +62,19 @@ class TodayStatsApiTest {
                 .andExpect(jsonPath("$[0].cycles").value(4))
                 .andExpect(jsonPath("$[0].avgCtMs").value(20000)); // 간격 중앙값이라 멈춘 1시간이 안 끼어요
         mvc.perform(get("/api/monitoring/processes/PRESS/cycles").param("date", DAY).param("lineId", "A"))
-                .andExpect(jsonPath("$.length()").value(4))
+                .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$[0].cycles").value(3))
-                .andExpect(jsonPath("$[0].avgCtMs").doesNotExist()) // PR1~PR3은 행 시각이 덮여서 CT를 못 구해요
-                .andExpect(jsonPath("$[3].equipmentId").value("A-PR4"))
-                .andExpect(jsonPath("$[3].cycles").value(2))
-                .andExpect(jsonPath("$[3].avgCtMs").value(17000)); // PR4 끝난 시각 간격
+                .andExpect(jsonPath("$[0].avgCtMs").value(17000)) // 단마다 들어간 시각 간격 (product_flow)
+                .andExpect(jsonPath("$[1].equipmentId").value("A-PR4"))
+                .andExpect(jsonPath("$[1].cycles").value(2))
+                .andExpect(jsonPath("$[1].avgCtMs").value(17000));
         mvc.perform(get("/api/monitoring/processes/NOPE/cycles")).andExpect(status().isBadRequest());
     }
 
     @Test
     void pressMetrics_readOwnStageColumnAcrossLineRows() throws Exception {
-        // 행의 equipment_id가 A-PR4로 바뀌어 있어도 PR1 그래프는 라인의 좌 압력 3점
+        // 행의 equipment_id가 A-PR4로 바뀌어 있어도 PR1 그래프는 PR1을 지난 제품의 좌 압력 3점 (시각 = PR1에서 나온 시각)
         mvc.perform(get("/api/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY).param("interval", "raw"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.metrics.length()").value(1))
@@ -85,15 +92,18 @@ class TodayStatsApiTest {
                 "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values "
                         + "('B-WD','용접B','WELDING','B',1,true), ('PT2','도장-2','PAINTING',null,2,true)",
                 "update line set current_paint_id = 'PT2' where line_id = 'B'",
-                "insert into welding_data(equipment_id, measured_at, current, result) values "
-                        + "('B-WD','2026-11-10 09:00:00',15.0,'OK'), ('B-WD','2026-11-10 09:00:20',15.0,'OK')",
-                "insert into painting_data(equipment_id, line_id, measured_at, result) values ('PT2','B','2026-11-10 09:01:00','OK')");
+                "insert into welding_data(product_id, equipment_id, measured_at, current, result) values "
+                        + "('B-1','B-WD','2026-11-10 09:00:00',15.0,'OK'), ('B-2','B-WD','2026-11-10 09:00:20',15.0,'OK')",
+                "insert into painting_data(product_id, equipment_id, line_id, measured_at, result) values ('B-1','PT2','B','2026-11-10 09:01:00','OK')",
+                "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
+                        + "('B-1','B-WD','B','2026-11-10 08:59:43','2026-11-10 09:00:00'), ('B-1','PT2','B','2026-11-10 09:00:56','2026-11-10 09:01:00'), "
+                        + "('B-2','B-WD','B','2026-11-10 09:00:03','2026-11-10 09:00:20')");
         mvc.perform(get("/api/production/wip").param("paintId", "PT2"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].process").value("WELDING"))
-                .andExpect(jsonPath("$[0].wipQty").value(1)) // B 용접 OK 2 − B 도장 행 1 (A는 PT1으로 가서 빠짐)
+                .andExpect(jsonPath("$[0].wipQty").value(1)) // B-2가 용접 뒤에서 PT2를 기다려요 (A는 PT1으로 가서 빠짐)
                 .andExpect(jsonPath("$[1].process").value("PAINTING"))
-                .andExpect(jsonPath("$[1].wipQty").value(1)); // PT2 OK 1 − PT2 검사 0
+                .andExpect(jsonPath("$[1].wipQty").value(1)); // B-1이 PT2에서 나와 검사를 기다려요
         mvc.perform(get("/api/production/wip").param("paintId", "A-WD")).andExpect(status().isBadRequest());
     }
 }

@@ -57,7 +57,8 @@ public class ProductionController {
     }
 
     @Operation(summary = "M-13 공정별 재공품(WIP) 수량",
-            description = "P1. 앞 공정 OK 행 수 − 다음 공정 행 수(누적). 코일입고는 coil_receipt.product_qty 합 − 슬리팅 행 수이고 lineId 를 주면 빠져요.")
+            description = "P1. 앞 공정 설비에서 나왔는데 다음 공정 설비에 아직 안 들어간 제품 수(product_flow, 공정 NG 제외, 처리 중은 재공 아님). "
+                    + "코일입고는 coil_receipt.product_qty 합 − 슬리팅에 들어간 수이고 lineId 를 주면 빠져요.")
     @GetMapping("/production/wip")
     public List<WipResponse> wip(@RequestParam(required = false) String lineId,
                                  @Parameter(description = "도장 설비(PT1·PT2). 주면 그 도장의 앞(용접→도장)·뒤(도장→검사) 재공만 줘요")

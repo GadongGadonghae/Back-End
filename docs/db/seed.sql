@@ -1,11 +1,11 @@
 -- =====================================================================
--- 기준정보 초기 데이터 (schema.sql 실행 후에 실행) · v0.3.7 · 2026-11-17
+-- 기준정보 초기 데이터 (schema.sql 실행 후에 실행) · v0.3.9 · 2026-11-18 (v0.3.8에서 내용 변경 없음, 박자 주석만 16초로)
 -- 실행 방법:  psql -U postgres -d sfaas -f seed.sql
 -- =====================================================================
 
 -- 공정 6개 (코드는 API 명세서 방식)
 -- cycle_time_sec: 제품 1개 처리 시간(초). 시연용으로 정한 값 (11/17)
---   라인 박자 18초(라인마다 18초에 1개 투입) → 6개 라인 합계 1분에 20개 투입
+--   라인 박자 16초(라인마다 16초에 1개 투입) → 6개 라인 합계 1분에 22.5개 투입
 --   슬리팅 16초, 프레스 1대당 17초 (라인에 4대 → 프레스 구간 통과 68초), 용접 17초
 --   도장 4초(3개 라인 공용), 비전 검사 7초(6개 라인 공용 → 1분에 약 8.6개)
 --   → 검사기가 병목이라 검사 앞에 재공이 쌓여요 (시연에서 병목·재공을 보여주려는 설정, 11/17)
@@ -62,16 +62,26 @@ INSERT INTO downtime_code (code, code_name, is_planned, description) VALUES
 -- 관리값 기준: 설비마다 미리 설정 (11/16 결정)
 -- 정하는 방법: KAMP 원본 데이터에서 값의 99.8%가 들어오는 범위 (하위 0.1% ~ 상위 0.1%)
 -- 같은 종류 설비에는 처음에 같은 값을 복사해 두고, SCR-009 화면에서 설비별로 수정해요
--- 프레스 24대×4 + 용접 6대×4 + 도장 2대×4 = 128줄 / 슬리팅: 데이터 없음 → PLC 확정 후 추가
+-- 프레스 24대×1 + 용접 6대×4 + 도장 2대×4 = 56줄 / 슬리팅: 실제 인버터 값 확인 후 추가
+-- 프레스 (v0.3.8): press_data는 제품 1개 = 1줄. 프레스 4대가 한 항목씩 값을 채우고, 값이 붙을 때마다 판정
+--   PR1 = pressure_left, PR2 = pressure_right, PR3 = pressure_diff, PR4 = press_time. 벗어나면 그 프레스에서 NG·알람
+--   pressure_total은 판정 안 함
 INSERT INTO threshold (equipment_id, item_name, item_label, unit, lower_limit, upper_limit)
 SELECT e.equipment_id, d.item_name, d.item_label, d.unit, d.lower_limit, d.upper_limit
 FROM equipment e
 JOIN (VALUES
-    -- 프레스 (KAMP 7번, 64,359행 · 벗어나는 행 약 0.35%)
-    ('PRESS',    'press_time',     '가압 시간', '0.01s', 540,    570.6),
-    ('PRESS',    'pressure_left',  '좌 압력',   'bar',   270,    285.3),
-    ('PRESS',    'pressure_right', '우 압력',   'bar',   267,    276.3),
-    ('PRESS',    'pressure_total', '압력 합계', 'bar',   541,    560),
+    -- 프레스 (KAMP 7번, 64,359행)
+    ('PR1', 'pressure_left',  '좌 압력',        'bar',   270,    285.3),
+    ('PR2', 'pressure_right', '우 압력',        'bar',   267,    276.3),
+    ('PR3', 'pressure_diff',  '압력 차(좌-우)', 'bar',   -1.8,   12.5),
+    ('PR4', 'press_time',     '가압 시간',      '0.01s', 540,    570.6)
+) AS d(press_no, item_name, item_label, unit, lower_limit, upper_limit)
+  ON e.process_id = 'PRESS' AND e.equipment_id LIKE '%-' || d.press_no;
+
+INSERT INTO threshold (equipment_id, item_name, item_label, unit, lower_limit, upper_limit)
+SELECT e.equipment_id, d.item_name, d.item_label, d.unit, d.lower_limit, d.upper_limit
+FROM equipment e
+JOIN (VALUES
     -- 용접 (KAMP 5번, 11,939행) ※ 가압력은 약 8%가 5~10으로 따로 몰려 있음
     ('WELDING',  'press_force',    '가압력',    'bar',   2.16,   9.27),
     ('WELDING',  'current',        '전류',      'kA',    14.52,  15.07),

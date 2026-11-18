@@ -23,6 +23,7 @@ import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -164,6 +165,11 @@ public class ProductTraceService {
         String lineId = null, scrappedProcess = null, scrappedEquipment = null;
         boolean ng = false, ok = false;
         Map<String, Object> id = Map.of("id", productId);
+        Map<String, Map<String, Object>> flows = new LinkedHashMap<>(); // 설비 → 이동 기록, 들어간 순서
+        for (Map<String, Object> f : jdbc.queryForList("SELECT f.equipment_id, f.line_id, f.started_at, f.ended_at, e.process_id FROM product_flow f"
+                + " JOIN equipment e ON e.equipment_id = f.equipment_id WHERE f.product_id = :id ORDER BY f.flow_id", id)) {
+            flows.put((String) f.get("equipment_id"), f);
+        }
         for (ProcessData.Table t : ProcessData.TABLES) {
             for (Map<String, Object> row : jdbc.queryForList("SELECT x.*, e.line_id AS eq_line FROM " + t.name()
                     + " x JOIN equipment e ON e.equipment_id = x.equipment_id WHERE x.product_id = :id ORDER BY x.id", id)) {
@@ -178,10 +184,12 @@ public class ProductTraceService {
                         if (v == null) continue;
                         String stage = row.get("eq_line") + "-PR" + (i + 1);
                         Limit limit = limit(limits, stage, col);
-                        steps.add(new Step("PRESS", stage, at, Map.of(ProcessData.camel(col), v), limit != null && limit.out(v) ? "NG" : "OK"));
+                        OffsetDateTime stageAt = time(flows.get(stage), "ended_at");
+                        steps.add(step("PRESS", stage, stageAt != null ? stageAt : at, flows, Map.of(ProcessData.camel(col), v),
+                                limit != null && limit.out(v) ? "NG" : "OK"));
                     }
                 } else {
-                    steps.add(new Step(t.process(), equipmentId, at, ProcessData.values(row, t), (String) row.get("result")));
+                    steps.add(step(t.process(), equipmentId, at, flows, ProcessData.values(row, t), (String) row.get("result")));
                 }
                 if (rowNg && scrappedProcess == null) {
                     Breach b = breach(t, row, limits);
@@ -194,7 +202,7 @@ public class ProductTraceService {
         for (Map<String, Object> row : jdbc.queryForList("SELECT equipment_id, line_id, result, inspected_at FROM inspection_result"
                 + " WHERE product_id = :id ORDER BY inspection_id", id)) {
             String result = (String) row.get("result");
-            steps.add(new Step("INSPECTION", (String) row.get("equipment_id"), Kst.of(Kst.local(row.get("inspected_at"))), Map.of(), result));
+            steps.add(step("INSPECTION", (String) row.get("equipment_id"), Kst.of(Kst.local(row.get("inspected_at"))), flows, Map.of(), result));
             if (lineId == null) lineId = (String) row.get("line_id");
             ok |= "OK".equals(result);
             if ("NG".equals(result)) {
@@ -205,10 +213,27 @@ public class ProductTraceService {
                 }
             }
         }
+        // 들어갔지만 아직 값이 없는 설비(처리 중) — 측정값·결과 없이 시각만
+        for (Map<String, Object> f : flows.values()) {
+            String eq = (String) f.get("equipment_id");
+            if (steps.stream().anyMatch(st -> eq.equals(st.equipmentId()))) continue;
+            steps.add(step((String) f.get("process_id"), eq, null, flows, Map.of(), null));
+            if (lineId == null) lineId = (String) f.get("line_id");
+        }
         if (steps.isEmpty()) throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "제품 " + productId + "를 찾을 수 없습니다");
         String finalResult = ok ? "OK" : ng ? "NG" : "IN_PROGRESS";
         if (ok) scrappedProcess = scrappedEquipment = null;
         return new ProductDetailResponse(productId, lineId, finalResult, scrappedProcess, scrappedEquipment, steps);
+    }
+
+    private static Step step(String process, String equipmentId, OffsetDateTime at, Map<String, Map<String, Object>> flows,
+                             Map<String, Object> values, String result) {
+        Map<String, Object> f = flows.get(equipmentId);
+        return new Step(process, equipmentId, at, time(f, "started_at"), time(f, "ended_at"), values, result);
+    }
+
+    private static OffsetDateTime time(Map<String, Object> flow, String column) {
+        return flow == null ? null : Kst.of(Kst.local(flow.get(column)));
     }
 
     // ── P-03 공정 불량 제품 ──

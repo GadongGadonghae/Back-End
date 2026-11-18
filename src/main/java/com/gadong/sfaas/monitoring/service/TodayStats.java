@@ -30,33 +30,27 @@ public class TodayStats {
     }
 
     /**
-     * M-15. 설비별 그날 처리 수와 CT. CT는 연속한 두 행 간격의 중앙값이라 정지·시뮬레이션 사이 빈 시간이 끼어도 흔들리지 않아요
-     * (예전 (마지막 − 첫 행) ÷ (행 수 − 1)은 멈춘 시간까지 나눠서 커졌어요).
+     * M-15. 설비별 그날 처리 수(나온 제품)와 CT. CT = 같은 설비에 제품이 들어간 시각(product_flow.started_at) 간격의 중앙값이라
+     * 정지·시뮬레이션 사이 빈 시간이 끼어도 흔들리지 않아요. 프레스는 PR1~PR4 설비마다 나와요.
      */
     public List<CycleResponse> cycles(String process, String lineId, LocalDate date) {
         ProcessData.Table t = ProcessData.of(process).orElseThrow(() -> invalid("공정 " + process + "의 수집 데이터가 없습니다"));
         masterService.requireLine(lineId);
-        MapSqlParameterSource p = window(date == null ? Kst.now().toLocalDate() : date, lineId);
+        MapSqlParameterSource p = window(date == null ? Kst.now().toLocalDate() : date, lineId).addValue("process", t.process());
+        String from = " FROM product_flow f JOIN equipment e ON e.equipment_id = f.equipment_id WHERE e.process_id = :process"
+                + lineFilter(lineId, "f.line_id"); // 공용 도장은 제품이 온 라인
+        Map<String, List<LocalDateTime>> started = times("SELECT f.equipment_id AS k, f.started_at AS t" + from
+                + " AND f.started_at >= :from AND f.started_at < :to", p);
+        Map<String, Long> done = new TreeMap<>();
+        jdbc.query("SELECT f.equipment_id, COUNT(*)" + from + " AND f.ended_at >= :from AND f.ended_at < :to GROUP BY f.equipment_id", p,
+                rs -> { done.put(rs.getString(1), rs.getLong(2)); });
+        TreeMap<String, Boolean> ids = new TreeMap<>();
+        started.keySet().forEach(k -> ids.put(k, true));
+        done.keySet().forEach(k -> ids.put(k, true));
         List<CycleResponse> out = new ArrayList<>();
-        if (!"PRESS".equals(t.process())) {
-            String line = "PAINTING".equals(t.process()) ? "x.line_id" : "e.line_id"; // 도장은 공용이라 행에 적힌 line_id
-            times("SELECT x.equipment_id AS k, x.measured_at AS t FROM " + t.name() + " x JOIN equipment e ON e.equipment_id = x.equipment_id"
-                    + " WHERE x.measured_at >= :from AND x.measured_at < :to" + lineFilter(lineId, line), p)
-                    .forEach((id, ts) -> out.add(new CycleResponse(id, ts.size(), medianGapMs(ts))));
-            return out;
+        for (String id : ids.keySet()) {
+            out.add(new CycleResponse(id, done.getOrDefault(id, 0L).intValue(), medianGapMs(started.getOrDefault(id, List.of()))));
         }
-        // 프레스 1행 = 제품 1개이고 PR1→PR4가 쓸 때마다 measured_at이 그 단 시각으로 바뀌어요(실데이터 확인).
-        // 그래서 단마다 자기 칸이 채워진 행 수는 정확하지만, 시각이 남는 건 마지막 단(PR4)뿐이에요.
-        // shortcut: PR1~PR3 CT는 null. 단별 시각 컬럼이 생기면 그 시각으로 같은 방식(간격 중앙값)으로 채워요
-        for (int s = 0; s < ProcessData.PRESS_STAGES.size(); s++) {
-            String col = ProcessData.PRESS_STAGES.get(s);
-            String stage = "-PR" + (s + 1);
-            boolean last = s == ProcessData.PRESS_STAGES.size() - 1;
-            times("SELECT e.line_id AS k, x.measured_at AS t FROM press_data x JOIN equipment e ON e.equipment_id = x.equipment_id"
-                    + " WHERE x.measured_at >= :from AND x.measured_at < :to AND x." + col + " IS NOT NULL" + lineFilter(lineId, "e.line_id"), p)
-                    .forEach((line, ts) -> out.add(new CycleResponse(line + stage, ts.size(), last ? medianGapMs(ts) : null)));
-        }
-        out.sort((a, b) -> a.equipmentId().compareTo(b.equipmentId()));
         return out;
     }
 

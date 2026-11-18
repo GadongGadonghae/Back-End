@@ -19,7 +19,9 @@ public final class ProductDtos {
     /** P-02. 프레스는 PR1~PR4를 단계 4개로 나눠요 */
     public record ProductDetailResponse(String productId, String lineId, String finalResult, String scrappedProcess,
                                         String scrappedEquipmentId, List<Step> steps) {
-        public record Step(String process, String equipmentId, OffsetDateTime at, Map<String, Object> values, String result) {}
+        /** at = 값이 기록된 시각(처리 끝), startedAt·endedAt = 설비에 들어간·나간 시각(product_flow). 처리 중이면 endedAt·result가 null */
+        public record Step(String process, String equipmentId, OffsetDateTime at, OffsetDateTime startedAt, OffsetDateTime endedAt,
+                           Map<String, Object> values, String result) {}
     }
 
     /** P-03. 기준을 벗어난 항목이 없으면(공정 중단 등) itemName부터 limit까지 null */

@@ -62,17 +62,18 @@
 - 다음 공정 INSERT는 앞 공정 `result = 'OK'`일 때만 (Node-RED·가상 설비, IoT 확인 필요)
 - 최종 양품 = `inspection_result.result = 'OK'`
 
-## 2. 재공품 (WIP) — 누적
-| 구간 | 재공 = 앞 공정 OK 수 − 다음 공정 투입 수 | 범위 |
+## 2. 재공품 (WIP) — 누적, DB v0.3.9 `product_flow` 기준 (11/18)
+재공 = 제품의 **마지막 이동 기록이 끝났고**(`ended_at` 있음, 다음 설비 줄 없음) 공정 판정 NG가 아닌 제품 수. 그 설비 뒤에서 기다리는 재공이에요.
+처리 중(`started_at` 있고 `ended_at` 없음)은 재공이 아니에요.
+| 구간 | 재공 | 범위 |
 |---|---|---|
-| COIL → SLITTING | `coil_receipt.product_qty` 합 − 슬리팅 전체 행 수 | 공장 전체 (코일은 라인 구분 없음) |
-| SLITTING → PRESS | 라인 슬리터 OK 수 − 라인 프레스 행 수 | 라인별 |
-| PRESS → WELDING | 라인 프레스 OK 행 수 − 라인 용접 행 수 | 라인별 |
-| WELDING → PAINTING | 이 도장을 쓰는 라인들의 용접 OK 수 − 도장 행 수(`painting_data.line_id` 기준) | 라인별로 세고 도장 설비별로 합침 |
-| PAINTING → INSPECTION | 도장 OK 수 − `inspection_result` 행 수 | 도장 설비별 (`paint_equipment_id`) |
-- 프레스 4대 중간 재공(PR1→PR2 등)은 보지 않음. 프레스 4대는 앞 구간(SLITTING→PRESS) 재공 하나를 같이 봄
-- 프레스 행은 PR1에서 생기므로 SLITTING→PRESS 투입 수 = 프레스 행 수, PRESS OK 수 = `result = 'OK'`(PR4까지 통과) 행 수
-- (v2) `product_id`가 생기면 재공을 "마지막 OK 공정이 X이고 다음 공정 행이 없는 제품 수"로도 셀 수 있음. 숫자는 위 식과 같음
+| COIL → SLITTING | `coil_receipt.product_qty` 합 − 슬리팅에 들어간 제품 수 | 공장 전체 (코일은 라인 구분 없음) |
+| SLITTING → PRESS | 슬리터에서 나와 PR1을 기다림 | 라인별 |
+| PRESS → WELDING | PR4에서 나와 용접을 기다림 | 라인별 |
+| WELDING → PAINTING | 용접에서 나와 도장을 기다림 (`paintId`: 지금 그 도장으로 가는 라인들의 합) | 라인별, 도장 설비별 |
+| PAINTING → INSPECTION | 도장에서 나와 검사를 기다림 (`product_flow.line_id`로 라인별) | 라인별, 도장 설비별 |
+- 프레스 단 사이 재공(PR1→PR2 등)은 M-13에 안 나오고, 상태 판정(I)에서만 써요
+- 예전 계산(앞 공정 OK 행 수 − 다음 공정 행 수)은 처리 중인 제품까지 재공으로 셌어요 (worklog 8번)
 - 최종 양품률(lineYield) = 비전 OK 제품 수 ÷ 슬리팅 투입 제품 수
 ## 3. 상태 판정 (RSID + DC) — 1초마다, 39대 전부
 우선순위 **D > DC > S > I > R** (위에서부터 맞는 것 하나)
@@ -81,7 +82,7 @@
 | D 고장 | `equipment_signal.fault = 1` | UP_BREAKDOWN |
 | DC 통신 끊김 | `now − last_seen_at > 10초` 또는 신호 행 없음 | 없음 (가동으로 계산) |
 | S 계획정지 | 그 라인에 진행 중 계획정지(`downtime_event`, PL_ 코드, `ended_at IS NULL`) | 계획정지의 PL_ 코드 (S-02로 등록) |
-| I 대기 | 이 설비 앞 구간 재공 ≤ 0 | UP_SHORTAGE |
+| I 대기 | 처리 중인 제품 없음 + 바로 앞 재공 0 (product_flow, 프레스 PR2~PR4는 앞 단 뒤) | UP_SHORTAGE |
 | R 가동 | 그 외 (알람이 있어도 R) | - |
 - 공용 설비(PT1·PT2·VI)는 라인 계획정지 대상이 아님 → S 판정 안 함
 

@@ -130,6 +130,26 @@ class ProductTraceApiTest {
     }
 
     @Test
+    void product_stepTimesFromFlow_andInProcessStep() throws Exception {
+        // P-WIP: 슬리팅·PR1을 지나 지금 PR2에서 처리 중 (PR2 값은 아직 없음)
+        jdbc.update("insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
+                + "('P-WIP','A-SL','A','2026-11-10 09:09:44','2026-11-10 09:10:00'), ('P-WIP','A-PR1','A','2026-11-10 09:10:01','2026-11-10 09:10:10'), "
+                + "('P-WIP','A-PR2','A','2026-11-10 09:10:12',null)");
+        mvc.perform(get("/api/products/P-WIP"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.finalResult").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.steps.length()").value(3))
+                .andExpect(jsonPath("$.steps[0].startedAt").value("2026-11-10T09:09:44+09:00"))
+                .andExpect(jsonPath("$.steps[1].equipmentId").value("A-PR1"))
+                .andExpect(jsonPath("$.steps[1].endedAt").value("2026-11-10T09:10:10+09:00"))
+                .andExpect(jsonPath("$.steps[2].equipmentId").value("A-PR2")) // 처리 중: 값·결과·나간 시각 없음
+                .andExpect(jsonPath("$.steps[2].process").value("PRESS"))
+                .andExpect(jsonPath("$.steps[2].startedAt").value("2026-11-10T09:10:12+09:00"))
+                .andExpect(jsonPath("$.steps[2].endedAt").doesNotExist())
+                .andExpect(jsonPath("$.steps[2].result").doesNotExist());
+    }
+
+    @Test
     void processNg_firstBreachOrStopReason() throws Exception {
         mvc.perform(get("/api/production/process-ng").param("from", DAY).param("to", DAY))
                 .andExpect(status().isOk())
