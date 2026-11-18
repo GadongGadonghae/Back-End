@@ -3,6 +3,7 @@ package com.gadong.sfaas.availability.controller;
 import com.gadong.sfaas.availability.dto.PlanningDtos.*;
 import com.gadong.sfaas.availability.service.PlanningService;
 import com.gadong.sfaas.global.response.PageResponse;
+import com.gadong.sfaas.monitoring.service.ProductTraceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
@@ -28,18 +29,23 @@ public class PlanningController {
     private static final String DATE = "yyyy-MM-dd";
 
     private final PlanningService service;
+    private final ProductTraceService productTrace;
 
-    public PlanningController(PlanningService service) {
+    public PlanningController(PlanningService service, ProductTraceService productTrace) {
         this.service = service;
+        this.productTrace = productTrace;
     }
 
     @Operation(summary = "G-01 생산량 조회 (기간별·라인별·계획 대비)",
-            description = "P2. 실적은 생산 수(검사 수 + 공정 불량 수)예요.")
+            description = "P2. 실적은 생산 수(검사 수 + 공정 불량 수)예요. "
+                    + "unit=hour는 응답 모양이 달라요: [{ period, lineId, inspected, good, processNg, cumulativeGood }] "
+                    + "(inspected_at 기준 1시간 구간, 빈 시간은 0, 오늘은 지금 시간까지, cumulativeGood은 from부터 라인별 누적)")
     @GetMapping("/production/summary")
-    public List<ProductionSummaryResponse> productionSummary(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
-                                                             @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
-                                                             @RequestParam(defaultValue = "day") String unit,
-                                                             @RequestParam(required = false) String lineId) {
+    public List<?> productionSummary(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
+                                     @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
+                                     @RequestParam(defaultValue = "day") String unit,
+                                     @RequestParam(required = false) String lineId) {
+        if ("hour".equals(unit)) return productTrace.hourly(from, to, lineId);
         return service.productionSummary(from, to, unit, lineId);
     }
 
@@ -62,8 +68,8 @@ public class PlanningController {
     @GetMapping("/reassignments")
     public PageResponse<ReassignmentReportResponse> reports(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                             @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
-                                                            @RequestParam(defaultValue = "0") int page,
-                                                            @RequestParam(defaultValue = "20") int size) {
+                                                            @RequestParam(defaultValue = "1") int page,
+                                                            @RequestParam(defaultValue = "50") int size) {
         return service.reports(from, to, page, size);
     }
 

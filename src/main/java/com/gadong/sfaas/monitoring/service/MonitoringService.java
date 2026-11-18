@@ -103,16 +103,24 @@ public class MonitoringService {
         Equipment equipment = masterService.equipment(equipmentId);
         Optional<ProcessData.Table> table = ProcessData.of(equipment.getProcessId());
         if (table.isEmpty()) return new MetricsResponse(equipmentId, List.of()); // 검사기는 측정 항목이 없어요
-        List<String> columns = table.get().columns().stream()
+        // 프레스는 한 행을 PR1~PR4가 이어서 채우고 equipment_id가 마지막 단으로 바뀌어요 → 그 라인 행에서 이 단의 칸만 봐요
+        String stage = "PRESS".equals(equipment.getProcessId()) && equipment.getSeqNo() != null
+                && equipment.getSeqNo() >= 1 && equipment.getSeqNo() <= ProcessData.PRESS_STAGES.size()
+                ? ProcessData.PRESS_STAGES.get(equipment.getSeqNo() - 1) : null;
+        List<String> columns = (stage == null ? table.get().columns() : List.of(stage)).stream()
                 .filter(c -> metric == null || ProcessData.camel(c).equals(metric)).toList();
         if (columns.isEmpty()) throw invalid("metric " + metric + "은 설비 " + equipmentId + "의 측정 항목이 아닙니다");
 
         Map<String, Threshold> limits = thresholdRepository.findByEquipmentId(equipmentId).stream()
                 .collect(Collectors.toMap(Threshold::getItemName, Function.identity(), (a, b) -> a));
+        // shortcut: 프레스 행은 단이 쓸 때마다 measured_at이 바뀌어 점 시각은 그 제품의 마지막 단 시각이에요(PR4만 정확). 단별 시각 컬럼이 생기면 그걸로 바꿔요
+        String where = stage == null ? "equipment_id = :eq"
+                : "equipment_id IN (SELECT equipment_id FROM equipment WHERE line_id = :line AND process_id = 'PRESS') AND " + stage + " IS NOT NULL";
+        MapSqlParameterSource p = new MapSqlParameterSource().addValue("eq", equipmentId).addValue("line", equipment.getLineId())
+                .addValue("from", Kst.start(from)).addValue("to", Kst.endExclusive(to));
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT measured_at, result, " + String.join(", ", columns) + " FROM " + table.get().name()
-                        + " WHERE equipment_id = :eq AND measured_at >= :from AND measured_at < :to ORDER BY measured_at",
-                Map.of("eq", equipmentId, "from", Kst.start(from), "to", Kst.endExclusive(to)));
+                        + " WHERE " + where + " AND measured_at >= :from AND measured_at < :to ORDER BY measured_at", p);
 
         List<MetricsResponse.Series> series = new ArrayList<>();
         for (String c : columns) {
@@ -159,7 +167,7 @@ public class MonitoringService {
                         toDouble(rs.getBigDecimal("lower_limit")), toDouble(rs.getBigDecimal("upper_limit")),
                         Kst.of(rs.getObject("raised_at", LocalDateTime.class)), Kst.of(rs.getObject("cleared_at", LocalDateTime.class)),
                         Kst.of(rs.getObject("acked_at", LocalDateTime.class))));
-        return new PageResponse<>(content, total);
+        return new PageResponse<>(content, total, page, size);
     }
 
     /** M-06. 이미 확인한 알람은 처음 확인한 사람·시각을 돌려줘요 */
@@ -224,7 +232,7 @@ public class MonitoringService {
                 (rs, n) -> new InspectionResponse(rs.getLong("inspection_id"), rs.getString("product_id"), rs.getString("line_id"),
                         rs.getString("paint_equipment_id"), rs.getString("result"),
                         Kst.of(rs.getObject("inspected_at", LocalDateTime.class))));
-        return new PageResponse<>(content, total);
+        return new PageResponse<>(content, total, page, size);
     }
 
     /** M-09 */
@@ -255,8 +263,10 @@ public class MonitoringService {
     }
 
     /** M-13 */
-    public List<WipResponse> wip(String lineId) {
-        return productionStats.wip(lineId);
+    public List<WipResponse> wip(String lineId, String paintId) {
+        if (paintId == null) return productionStats.wip(lineId);
+        if (lineId != null) throw invalid("lineId와 paintId는 같이 쓸 수 없습니다");
+        return productionStats.paintWip(paintId);
     }
 
     /** E-01. 공정별 테이블에서 각각 최신순으로 필요한 만큼만 읽고 합쳐서 페이지를 나눠요 */
@@ -273,7 +283,7 @@ public class MonitoringService {
             tables = tables.stream().filter(t -> t.process().equals(eqProcess)).toList();
         }
 
-        long need = (long) (page + 1) * size;
+        long need = (long) page * size;
         long total = 0;
         List<EquipmentDataResponse> merged = new ArrayList<>();
         for (ProcessData.Table t : tables) {
@@ -286,16 +296,16 @@ public class MonitoringService {
             total += jdbc.queryForObject("SELECT COUNT(*)" + where, p, Long.class);
             p.addValue("limit", need);
             String cols = t.columns().stream().map(c -> "d." + c).collect(Collectors.joining(", "));
-            for (Map<String, Object> row : jdbc.queryForList("SELECT d.equipment_id, d.measured_at, d.result, " + cols + where
+            for (Map<String, Object> row : jdbc.queryForList("SELECT d.equipment_id, d.product_id, d.measured_at, d.result, " + cols + where
                     + " ORDER BY d.measured_at DESC, d.id DESC LIMIT :limit", p)) {
                 merged.add(new EquipmentDataResponse(Kst.of(Kst.local(row.get("measured_at"))), (String) row.get("equipment_id"),
-                        t.process(), (String) row.get("result"), ProcessData.values(row, t)));
+                        (String) row.get("product_id"), t.process(), (String) row.get("result"), ProcessData.values(row, t)));
             }
         }
         merged.sort(Comparator.comparing(EquipmentDataResponse::ts).reversed());
-        int fromIndex = (int) Math.min((long) page * size, merged.size());
+        int fromIndex = (int) Math.min((long) (page - 1) * size, merged.size());
         int toIndex = (int) Math.min(need, merged.size());
-        return new PageResponse<>(new ArrayList<>(merged.subList(fromIndex, toIndex)), total);
+        return new PageResponse<>(new ArrayList<>(merged.subList(fromIndex, toIndex)), total, page, size);
     }
 
     /** M-01·M-12 공통: 열린 상태 구간(ended_at IS NULL) + 그 구간의 비가동 사유(downtime_id) + 마지막 측정값 */

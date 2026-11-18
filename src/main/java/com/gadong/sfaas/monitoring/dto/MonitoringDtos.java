@@ -69,7 +69,10 @@ public final class MonitoringDtos {
     /** M-13 */
     public record WipResponse(String process, String nextProcess, int wipQty) {}
 
-    /** E-01 */
-    public record EquipmentDataResponse(OffsetDateTime ts, String equipmentId, String process, String result,
+    /** E-01. productId는 Node-RED가 안 넣었으면 null */
+    public record EquipmentDataResponse(OffsetDateTime ts, String equipmentId, String productId, String process, String result,
                                         Map<String, Object> values) {}
+
+    /** M-15 설비별 사이클 수·평균 CT(ms). 행이 1개 이하면 avgCtMs는 null */
+    public record CycleResponse(String equipmentId, long cycles, Long avgCtMs) {}
 }

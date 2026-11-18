@@ -1,6 +1,8 @@
-# ⚖️ 판정 로직 설계 v1 (2026-11-17)
+[판정로직_설계_v2.md](https://github.com/user-attachments/files/34966731/_._v2.md)
+# ⚖️ 판정 로직 설계 v2 (2026-11-17 저녁)
 
-> 기준: API 명세서 v3.1(`docs/api-spec.md`), DB `schema.sql` v0.3.7, 11/17 사용자 결정.
+> 기준: API 명세서 v3(레포 `docs/api-spec.md`), DB `schema.sql` v0.3.7, 11/17 사용자 결정.
+> v2 변경 (v1 대비): 제품 추적(product_id), 프레스 INSERT 후 UPDATE, 설비마다 판정, 끊긴 제품 NG. 데이터 흐름 예시는 `제품추적_데이터흐름_v1.md`
 > 구현 위치: `judge` 패키지. Controller·Node-RED에는 판정을 두지 않아요.
 
 ## ✅ 11/17 결정
@@ -9,6 +11,14 @@
 3. **재공품은 DB에 데이터가 들어온 처음부터 누적**으로 셈. 프레스 4대는 한 제품이 PR1→PR2→PR3→PR4를 모두 거침. **프레스 사이 재공은 보지 않고, 큰 공정 사이 재공만** 봄
 4. **비전 OK/NG는 Node-RED가 장비 판정값을 그대로 저장** (`inspection_result.result` NOT NULL). 백엔드는 비전을 다시 판정하지 않고 집계만 함
 5. 새 값 찾기: 1초마다 `result IS NULL` 행 조회 (백엔드 재량)
+
+## ✅ 11/17 저녁 결정 (v2)
+6. **제품 추적:** 슬리팅 투입 때 `product_id` 생성 (형식 예 `A-20261117-0001`). 모든 공정 데이터에 `product_id`가 붙음. 비전까지 OK면 **최종 양품**
+7. **프레스는 제품 1행에 값이 붙음:** PR1 통과 시 INSERT(pressure_left만), PR2~PR4 통과 시 같은 행 UPDATE. 설비 하나에 값 하나
+8. **설비마다 판정:** 값이 붙을 때마다 백엔드가 판정, 벗어나면 그 자리에서 NG → 다음 설비·공정으로 안 감
+9-1. **도장은 제품 단위 (11/17):** 제품이 담긴 시점의 용액 상태를 `painting_data` 1행에 `product_id`와 함께 저장. 용액 상태가 기준치를 벗어나면 그 제품 NG
+9. **끊긴 제품은 그 공정에서 NG:** 제품 앞 설비가 D 또는 DC가 되면 그 제품 NG. S(계획정지)는 NG 아님 (가정, 확인 필요)
+- ❓ 미정 (DB·IoT 담당): 제품 번호를 누가 만드는지, 프레스 행의 `equipment_id`·`measured_at` 갱신 여부
 
 ## 1. 공정 판정 (result) — 1초마다
 대상: `slitting_data`, `press_data`, `welding_data`, `painting_data` 중 `result IS NULL` 행 (id 순, 한 번에 최대 500건)
@@ -22,6 +32,36 @@
 5. 저장 후 W-03(생산), W-02(알람) 푸시
 - 알람은 **상태(RSID)를 바꾸지 않음**. 비가동 이력도 만들지 않음
 
+### 1-1. 프레스 단계별 판정 (v2)
+`press_data` 1행 = 제품 1개. 프레스 4대가 각자 값 하나씩 붙임
+| 설비 | 붙는 칸 | 값 |
+|---|---|---|
+| {라인}-PR1 | `pressure_left` | 좌 압력 (이 시점에 행 INSERT) |
+| {라인}-PR2 | `pressure_right` | 우 압력 (UPDATE) |
+| {라인}-PR3 | `pressure_diff` | 좌·우 압력 차 (UPDATE, DB 칸 추가 요청) |
+| {라인}-PR4 | `press_time` | 가압 시간 (UPDATE) |
+
+1. 1초마다 `result IS NULL`인 프레스 행을 읽음
+2. NULL이 아닌 값을 PR1→PR4 순서로 그 설비 기준치(`threshold`: A-PR1·pressure_left, A-PR2·pressure_right, A-PR3·pressure_diff, A-PR4·press_time)와 비교
+3. 하나라도 벗어나면 즉시 `result = 'NG'` + 알람 (알람 equipment_id = 그 프레스). 그 제품은 다음 프레스로 안 감
+4. 네 값이 다 차고 모두 범위 안이면 `result = 'OK'`
+5. 값이 덜 찼고 이탈도 없으면 그대로 둠 (다음 값을 기다림)
+- 판정한 칸을 따로 기록하지 않음. 이미 OK인 값은 다시 비교해도 OK
+- 1초 폴링, 설비 간 CT 17초 → 다음 설비 도착 전에 판정 끝남
+- Node-RED는 `UPDATE ... WHERE product_id = ? AND result IS NULL`로 갱신 → NG 행은 더 안 바뀜
+- `pressure_total`은 판정에 쓰지 않음 (저장만)
+- **설비별 집계는 칸 기준 (v2):** 프레스 행의 `equipment_id`로 세지 않음. 설비 X의 처리 수 = X 칸이 NULL 아닌 행 수, X의 NG 수 = X 칸 값이 기준 밖인 NG 행 수. OEE 품질·성능, M-03 추이, M-01 lastValues 모두 이 기준
+- 프레스 공정 생산 수(M-07 byProcess) = `result IS NOT NULL` 행 수 (생산 중 행 제외)
+
+### 1-2. 끊긴 제품 NG (v2)
+- 프레스: `result IS NULL`인 행에서 채워진 값 개수로 다음 설비를 정함 (예: 값 2개 → PR3). 그 설비가 **D 또는 DC**가 되면 `result = 'NG'`
+- 다른 공정: 다음 공정 설비가 D·DC일 때 앞 공정 OK 제품을 어떻게 볼지는 미정 (중간발표 범위 밖)
+- S(계획정지)는 NG 아님 (가정)
+
+### 1-3. 다음 공정 투입 조건
+- 다음 공정 INSERT는 앞 공정 `result = 'OK'`일 때만 (Node-RED·가상 설비, IoT 확인 필요)
+- 최종 양품 = `inspection_result.result = 'OK'`
+
 ## 2. 재공품 (WIP) — 누적
 | 구간 | 재공 = 앞 공정 OK 수 − 다음 공정 투입 수 | 범위 |
 |---|---|---|
@@ -31,19 +71,9 @@
 | WELDING → PAINTING | 이 도장을 쓰는 라인들의 용접 OK 수 − 도장 행 수(`painting_data.line_id` 기준) | 라인별로 세고 도장 설비별로 합침 |
 | PAINTING → INSPECTION | 도장 OK 수 − `inspection_result` 행 수 | 도장 설비별 (`paint_equipment_id`) |
 - 프레스 4대 중간 재공(PR1→PR2 등)은 보지 않음. 프레스 4대는 앞 구간(SLITTING→PRESS) 재공 하나를 같이 봄
-- ✅ (11/17 확인) **DB는 그대로**, `press_data` 1행 = 제품 1개. 프레스 4대가 각자 한 항목씩 맡아 백엔드가 판정함
-  | 설비 | 판정 항목 | 값 |
-  |---|---|---|
-  | {라인}-PR1 | `pressure_left` | 좌 압력 |
-  | {라인}-PR2 | `pressure_right` | 우 압력 |
-  | {라인}-PR3 | `pressure_diff` (계산값) | 좌 − 우 압력 차 (백엔드 계산, DB 칸 없음) |
-  | {라인}-PR4 | `press_time` | 가압 시간 |
-  - 앞에서부터 PR1→PR4 순서로 비교, 처음 벗어난 설비에서 NG(폐기)·알람 (알람의 equipment_id = 그 프레스)
-  - 기준치는 `threshold`에 설비별로: A-PR1·pressure_left, A-PR2·pressure_right, A-PR3·pressure_diff, A-PR4·press_time
-  - `pressure_total`은 판정에 쓰지 않음 (저장만)
-  - ❓ Node-RED가 넣는 행의 `equipment_id`: **{라인}-PR4로 통일 제안** (프레스 구간을 마친 시점). IoT 담당과 맞춰야 함
-  - ✅ (11/17) DB 담당이 `threshold`에 `pressure_diff` 항목을 넣기로 함
-
+- 프레스 행은 PR1에서 생기므로 SLITTING→PRESS 투입 수 = 프레스 행 수, PRESS OK 수 = `result = 'OK'`(PR4까지 통과) 행 수
+- (v2) `product_id`가 생기면 재공을 "마지막 OK 공정이 X이고 다음 공정 행이 없는 제품 수"로도 셀 수 있음. 숫자는 위 식과 같음
+- 최종 양품률(lineYield) = 비전 OK 제품 수 ÷ 슬리팅 투입 제품 수
 ## 3. 상태 판정 (RSID + DC) — 1초마다, 39대 전부
 우선순위 **D > DC > S > I > R** (위에서부터 맞는 것 하나)
 | 상태 | 조건 | 사유 코드 |
@@ -71,3 +101,4 @@
 - `UP_ALARM` 코드: 비가동 사유로 자동 부여하지 않음 (사람이 U-09로 고를 때만 사용, 또는 삭제)
 - 재공품 정의에 "누적, 프레스는 제품 1행 기준" 추가
 - 비전 판정 주체: Node-RED가 장비 판정값 저장
+- (v2) Q-01 공정 데이터에 `productId` 추가, 프레스 INSERT 후 UPDATE·설비마다 판정, 끊긴 제품 NG, 최종 양품 정의

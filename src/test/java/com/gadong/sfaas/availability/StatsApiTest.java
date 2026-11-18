@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
  * B라인은 정지 없음. 처리 시간은 슬리팅 16초, 프레스 17초, 용접 17초라 라인 능력은 1/17개/초예요.
  */
 @SpringBootTest
+@WithMockUser(username = "testuser", roles = "MANAGER") // API는 로그인 필요 (SecurityConfig)
 @AutoConfigureMockMvc
 @Transactional
 class StatsApiTest {
@@ -125,7 +127,8 @@ class StatsApiTest {
                 .andExpect(jsonPath("$.plannedMin").value(8580))
                 .andExpect(jsonPath("$.unplannedStopMin").value(90))
                 .andExpect(jsonPath("$.lossQty").value(318)) // (3,600 + 1,800) ÷ 17 = 317.6
-                .andExpect(jsonPath("$.quality").value(62.5))
+                .andExpect(jsonPath("$.quality").value(88.9)) // 공정 OK 8 ÷ 판정 9 (슬리팅 5/5, 프레스 2/3, 용접 1/1)
+                .andExpect(jsonPath("$.lineYield").value(100.0)) // 출고 양품 5 ÷ 슬리팅 투입 5
                 .andExpect(jsonPath("$.performance").isNumber())
                 .andExpect(jsonPath("$.oee").isNumber());
         mvc.perform(get("/api/utilization/summary").param("from", DAY).param("to", DAY).param("lineId", "B"))

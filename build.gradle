@@ -35,6 +35,11 @@ dependencies {
     // 로그인·권한
     implementation 'org.springframework.boot:spring-boot-starter-security'
 
+    // JWT 인증 (BE2)
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
     // 실시간 푸시 (WebSocket + STOMP)
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
 
@@ -57,5 +62,6 @@ dependencies {
 }
 
 tasks.named('test') {
+    systemProperty 'user.timezone', 'Asia/Seoul'
     useJUnitPlatform()
 }

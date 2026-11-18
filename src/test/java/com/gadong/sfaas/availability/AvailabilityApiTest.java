@@ -13,11 +13,13 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /** 비가동(U-07~U-10)과 상태 타임라인(U-12)을 H2 데이터로 확인해요. */
 @SpringBootTest
+@WithMockUser(username = "testuser", roles = "MANAGER") // API는 로그인 필요 (SecurityConfig)
 @AutoConfigureMockMvc
 @Transactional
 class AvailabilityApiTest {
@@ -74,25 +76,25 @@ class AvailabilityApiTest {
     @Test
     void u08FiltersEvents() throws Exception {
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY))
-                .andExpect(jsonPath("$.totalElements").value(4)) // 30초짜리 2번 제외
-                .andExpect(jsonPath("$.content[0].eventId").value(5))
-                .andExpect(jsonPath("$.content[0].inProgress").value(true))
-                .andExpect(jsonPath("$.content[0].endAt").isEmpty());
+                .andExpect(jsonPath("$.total").value(4)) // 30초짜리 2번 제외
+                .andExpect(jsonPath("$.items[0].eventId").value(5))
+                .andExpect(jsonPath("$.items[0].inProgress").value(true))
+                .andExpect(jsonPath("$.items[0].endAt").isEmpty());
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("actionUserId", "1"))
-                .andExpect(jsonPath("$.content.length()").value(1))
-                .andExpect(jsonPath("$.content[0].minutes").value(40))
-                .andExpect(jsonPath("$.content[0].actionUserId").value(1))
-                .andExpect(jsonPath("$.content[0].actionUserName").value("김정비"))
-                .andExpect(jsonPath("$.content[0].memo").value("금형 점검"))
-                .andExpect(jsonPath("$.content[0].detail").value("압력 상한 초과"))
-                .andExpect(jsonPath("$.content[0].actionAt").value("2026-11-10T09:50:00+09:00"))
-                .andExpect(jsonPath("$.content[0].startAt").value("2026-11-10T09:00:00+09:00"));
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].minutes").value(40))
+                .andExpect(jsonPath("$.items[0].actionUserId").value(1))
+                .andExpect(jsonPath("$.items[0].actionUserName").value("김정비"))
+                .andExpect(jsonPath("$.items[0].memo").value("금형 점검"))
+                .andExpect(jsonPath("$.items[0].detail").value("압력 상한 초과"))
+                .andExpect(jsonPath("$.items[0].actionAt").value("2026-11-10T09:50:00+09:00"))
+                .andExpect(jsonPath("$.items[0].startAt").value("2026-11-10T09:00:00+09:00"));
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0"))
-                .andExpect(jsonPath("$.totalElements").value(5));
+                .andExpect(jsonPath("$.total").value(5));
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("inProgress", "true"))
-                .andExpect(jsonPath("$.totalElements").value(1));
+                .andExpect(jsonPath("$.total").value(1));
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("lineId", "A"))
-                .andExpect(jsonPath("$.totalElements").value(1));
+                .andExpect(jsonPath("$.total").value(1));
     }
 
     @Test
@@ -105,8 +107,8 @@ class AvailabilityApiTest {
                 .andExpect(jsonPath("$.actionUserName").value("김정비"));
         em.flush();
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0").param("reasonCode", "UP_DELAY"))
-                .andExpect(jsonPath("$.content[0].actionUserName").value("김정비"))
-                .andExpect(jsonPath("$.content[0].memo").value("자재 대기"));
+                .andExpect(jsonPath("$.items[0].actionUserName").value("김정비"))
+                .andExpect(jsonPath("$.items[0].memo").value("자재 대기"));
         mvc.perform(patch("/api/downtime/events/2").contentType(MediaType.APPLICATION_JSON).content("{\"actionUserId\":999}"))
                 .andExpect(status().isBadRequest()); // 없는 사용자
         mvc.perform(patch("/api/downtime/events/2").contentType(MediaType.APPLICATION_JSON).content("{\"reasonCode\":\"NOPE\"}"))
