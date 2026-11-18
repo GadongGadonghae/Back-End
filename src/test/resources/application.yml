@@ -16,3 +16,7 @@ spring:
 jwt:
   secret: ${JWT_TEST_SECRET:VGhpcy1pcy1hLXRlc3Qtb25seS1qd3Qtc2lnbmluZy1rZXktMzItYnl0ZXMh}
   expiration-ms: 3600000
+
+sfaas:
+  judge:
+    enabled: false              # 1초 판정 스케줄러를 꺼요. 판정은 테스트에서 직접 불러요
