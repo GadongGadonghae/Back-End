@@ -42,6 +42,24 @@ public class User {
     @Column(name = "created_at", insertable = false, updatable = false)
     private LocalDateTime createdAt;
 
+
+    public User(
+        String loginId,
+        String passwordHash,
+        String userName,
+        String role,
+        String email,
+        String memo
+    ) {
+        this.loginId = loginId;
+        this.passwordHash = passwordHash;
+        this.userName = userName;
+        this.role = role;
+        this.email = email;
+        this.memo = memo;
+    }
+
+
     public void updateLastLoginAt(LocalDateTime time) {
         this.lastLoginAt = time;
     }

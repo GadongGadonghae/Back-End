@@ -1,3 +1,4 @@
+
 package com.gadong.sfaas.global.exception;
 
 import org.springframework.http.HttpStatus;
@@ -8,7 +9,6 @@ public enum ErrorCode {
     NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 주소가 없습니다"),
     LINE_NOT_FOUND(HttpStatus.NOT_FOUND, "라인을 찾을 수 없습니다"),
     EQUIPMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "설비를 찾을 수 없습니다"),
-    // 아래 코드는 명세서에 없는 코드예요. EQUIPMENT_NOT_FOUND와 같은 이름 규칙으로 추가했어요
     THRESHOLD_NOT_FOUND(HttpStatus.NOT_FOUND, "알람 기준치를 찾을 수 없습니다"),
     ALARM_NOT_FOUND(HttpStatus.NOT_FOUND, "알람을 찾을 수 없습니다"),
     DOWNTIME_NOT_FOUND(HttpStatus.NOT_FOUND, "비가동 이력을 찾을 수 없습니다"),
@@ -16,6 +16,10 @@ public enum ErrorCode {
     PLANNED_STOP_NOT_FOUND(HttpStatus.NOT_FOUND, "계획정지를 찾을 수 없습니다"),
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "제품을 찾을 수 없습니다"),
     PLANNED_STOP_CONFLICT(HttpStatus.CONFLICT, "이미 진행 중인 계획정지가 있습니다"),
+
+    // C-03: 사용자 등록 시 로그인 ID 중복
+    USER_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 사용 중인 로그인 ID입니다"),
+
     LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "아이디 또는 비밀번호가 올바르지 않습니다"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다");
 
@@ -27,6 +31,11 @@ public enum ErrorCode {
         this.defaultMessage = defaultMessage;
     }
 
-    public HttpStatus status() { return status; }
-    public String defaultMessage() { return defaultMessage; }
+    public HttpStatus status() {
+        return status;
+    }
+
+    public String defaultMessage() {
+        return defaultMessage;
+    }
 }
