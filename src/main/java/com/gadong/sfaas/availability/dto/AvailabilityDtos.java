@@ -45,7 +45,6 @@ public final class AvailabilityDtos {
     /** U-09: 조치 담당자는 이름이 아니라 번호(동명이인 대비). 응답에 이름을 붙여요 */
     public record DowntimeEventUpdateRequest(String reasonCode, String memo, Integer actionUserId) {}
 
-    public record DowntimeEventUpdateResponse(long eventId, String reasonCode, Integer actionUserId, String actionUserName) {}
 
     /** U-10 */
     public record DowntimeTopResponse(String equipmentId, long totalMin, int count) {}

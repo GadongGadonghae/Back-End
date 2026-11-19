@@ -112,9 +112,9 @@ public class AvailabilityController {
     }
 
     @Operation(summary = "U-09 비가동 사유·조치 담당자·메모 입력/수정",
-            description = "P2. 보낸 값만 바꿔요. 조치 담당자는 번호(actionUserId)로 받고 응답에 이름(actionUserName)을 붙여요.")
+            description = "P2. 보낸 값만 바꿔요. 조치 담당자는 번호(actionUserId)로 받아요. 응답은 바뀐 뒤의 비가동 1건 전체(U-08 items와 같은 모양, memo·actionUserName 포함, 11/19)")
     @PatchMapping("/downtime/events/{eventId}")
-    public DowntimeEventUpdateResponse updateDowntimeEvent(@PathVariable long eventId,
+    public DowntimeEventResponse updateDowntimeEvent(@PathVariable long eventId,
                                                            @RequestBody DowntimeEventUpdateRequest request) {
         return service.updateDowntimeEvent(eventId, request);
     }

@@ -115,6 +115,12 @@ class MonitoringApiTest {
                 .andExpect(jsonPath("$.metrics[0].points[0].ts").value("2026-11-10T09:00:00+09:00"))
                 .andExpect(jsonPath("$.metrics[0].points[0].value").value(281.0))
                 .andExpect(jsonPath("$.metrics[0].points[0].result").value("NG"));
+        // after: 그 시각보다 뒤의 점만 (주기 조회로 새 점만, 11/19)
+        mvc.perform(get("/api/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY)
+                        .param("metric", "pressureLeft").param("after", "2026-11-10T09:00:03+09:00"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.metrics[0].points.length()").value(1))
+                .andExpect(jsonPath("$.metrics[0].points[0].ts").value("2026-11-10T09:00:07+09:00"));
         mvc.perform(get("/api/equipments/A-PR1/metrics").param("from", DAY).param("to", DAY).param("interval", "1m"))
                 .andExpect(status().isBadRequest());
         mvc.perform(get("/api/equipments/X-PR9/metrics").param("from", DAY).param("to", DAY))

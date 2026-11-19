@@ -1,5 +1,9 @@
 package com.gadong.sfaas.monitoring.service;
 
+import com.gadong.sfaas.global.util.Kst;
+import com.gadong.sfaas.monitoring.dto.MonitoringDtos.FlowPositionsResponse;
+import com.gadong.sfaas.monitoring.dto.MonitoringDtos.FlowPositionsResponse.ProductPosition;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +38,50 @@ public class FlowStats {
 
     public FlowStats(NamedParameterJdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    /** 제품의 지금 위치 (M-17 3D 물류). ended=false면 그 설비 안에서 처리 중, true면 그 설비 뒤에서 기다리는 중 */
+    public record Position(String productId, String lineId, String equipmentId, String process, int seq, boolean ended) {}
+
+    // 제품마다 마지막 이동 기록(flow_id 최대) 하나. 공정 NG(폐기)와 출고(검사에서 나옴)는 빼요. WAITING과 같은 규칙
+    private static final String POSITIONS = """
+            SELECT f.product_id, f.line_id, f.equipment_id, e.process_id, e.seq_no, f.ended_at
+            FROM product_flow f JOIN equipment e ON e.equipment_id = f.equipment_id
+            WHERE NOT EXISTS (SELECT 1 FROM product_flow g WHERE g.product_id = f.product_id AND g.flow_id > f.flow_id)
+              AND NOT (e.process_id = 'INSPECTION' AND f.ended_at IS NOT NULL)
+              AND NOT EXISTS (SELECT 1 FROM slitting_data x WHERE x.product_id = f.product_id AND x.result = 'NG')
+              AND NOT EXISTS (SELECT 1 FROM press_data x WHERE x.product_id = f.product_id AND x.result = 'NG')
+              AND NOT EXISTS (SELECT 1 FROM welding_data x WHERE x.product_id = f.product_id AND x.result = 'NG')
+              AND NOT EXISTS (SELECT 1 FROM painting_data x WHERE x.product_id = f.product_id AND x.result = 'NG')
+            ORDER BY f.line_id, f.product_id""";
+
+    public List<Position> positions() {
+        return jdbc.query(POSITIONS, Map.of(), (rs, n) -> new Position(rs.getString(1), rs.getString(2), rs.getString(3),
+                rs.getString(4), rs.getInt(5), rs.getObject(6) != null));
+    }
+
+    /**
+     * M-17: 공장 안 제품 위치. 설비 안(처리 중)이면 equipmentId, 공정 사이에서 기다리면 pile.
+     * pile = SL-PR · PR-WD · WD-PT (라인 안, 앞에 라인을 붙이지 않음) · PT1:PT-VI · PT2:PT-VI (도장 뒤).
+     * 프레스 단 사이(PR1~PR3 뒤)는 재공으로 세지 않아서 빼요 (프론트 요청, M-13과 같음)
+     */
+    public FlowPositionsResponse flowPositions() {
+        List<ProductPosition> out = new ArrayList<>();
+        for (Position p : positions()) {
+            if (!p.ended()) {
+                out.add(new ProductPosition(p.productId(), p.lineId(), p.equipmentId(), null));
+                continue;
+            }
+            String pile = switch (p.process()) {
+                case "SLITTING" -> "SL-PR";
+                case "PRESS" -> p.seq() >= ProcessData.PRESS_STAGES.size() ? "PR-WD" : null; // PR4 뒤만
+                case "WELDING" -> "WD-PT";
+                case "PAINTING" -> p.equipmentId() + ":PT-VI";
+                default -> null;
+            };
+            if (pile != null) out.add(new ProductPosition(p.productId(), p.lineId(), null, pile));
+        }
+        return new FlowPositionsResponse(Kst.of(Kst.now()), out);
     }
 
     // shortcut: 매번 전체 이동 기록을 훑어요(하루 수천 줄 기준). 기록이 수십만 줄로 쌓이면 기간을 자르거나 집계 테이블로 바꿔요

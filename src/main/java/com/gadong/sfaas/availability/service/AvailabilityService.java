@@ -138,16 +138,24 @@ public class AvailabilityService {
         // shortcut: minMinutes 필터와 페이지 나누기를 메모리에서 해요. 기간 안 비가동이 수만 건을 넘으면 SQL로 옮겨요
         List<Stop> stops = stops(where, p).stream().filter(s -> s.minutes() >= minMinutes).toList();
         List<DowntimeEventResponse> content = stops.stream().skip((long) (page - 1) * size).limit(size)
-                .map(s -> new DowntimeEventResponse(s.id(), s.lineId(), s.equipmentId(), s.process(), s.status(), s.code(),
-                        Kst.of(s.start()), Kst.of(s.end()), s.minutes(), s.end() == null, s.detail(), s.actionUserId(),
-                        s.actionUserName(), Kst.of(s.actionAt()), s.memo() == null ? "" : s.memo()))
+                .map(AvailabilityService::toResponse)
                 .toList();
         return new PageResponse<>(content, stops.size(), page, size);
     }
 
-    /** U-09: reasonCode·memo·actionUserId 중 보낸 값만 바꿔요. 응답에 조치 담당자 이름을 붙여요 */
+    private static DowntimeEventResponse toResponse(Stop s) {
+        return new DowntimeEventResponse(s.id(), s.lineId(), s.equipmentId(), s.process(), s.status(), s.code(),
+                Kst.of(s.start()), Kst.of(s.end()), s.minutes(), s.end() == null, s.detail(), s.actionUserId(),
+                s.actionUserName(), Kst.of(s.actionAt()), s.memo() == null ? "" : s.memo());
+    }
+
+    /**
+     * U-09: reasonCode·memo·actionUserId 중 보낸 값만 바꿔요.
+     * 응답은 바뀐 뒤의 비가동 1건 전체(U-08 items와 같은 모양)예요 → 프론트가 목록을 다시 찾지 않아도 돼요 (11/19).
+     * 예전 응답 칸(eventId·reasonCode·actionUserId·actionUserName)은 모두 그대로 들어 있어요
+     */
     @Transactional
-    public DowntimeEventUpdateResponse updateDowntimeEvent(long eventId, DowntimeEventUpdateRequest request) {
+    public DowntimeEventResponse updateDowntimeEvent(long eventId, DowntimeEventUpdateRequest request) {
         if (request == null) throw invalid("요청 본문이 필요합니다");
         Downtime downtime = downtimeRepository.findById(eventId).orElseThrow(() ->
                 new BusinessException(ErrorCode.DOWNTIME_NOT_FOUND, "비가동 이력 " + eventId + "를 찾을 수 없습니다"));
@@ -159,8 +167,11 @@ public class AvailabilityService {
             throw invalid("사용자 " + request.actionUserId() + "를 찾을 수 없습니다");
         }
         downtime.correct(request.reasonCode(), request.memo(), request.actionUserId(), Kst.now());
-        return new DowntimeEventUpdateResponse(eventId, downtime.getCode(), downtime.getActionUserId(),
-                users.name(downtime.getActionUserId()));
+        downtimeRepository.flush(); // 아래 JDBC 조회가 바뀐 값을 읽게
+        MapSqlParameterSource p = new MapSqlParameterSource("id", eventId)
+                .addValue("from", LocalDateTime.of(1970, 1, 1, 0, 0)).addValue("to", LocalDateTime.of(9999, 12, 31, 0, 0));
+        return stops(new StringBuilder(" AND d.downtime_id = :id"), p).stream().findFirst().map(AvailabilityService::toResponse)
+                .orElseThrow(() -> new BusinessException(ErrorCode.DOWNTIME_NOT_FOUND, "비가동 이력 " + eventId + "를 찾을 수 없습니다"));
     }
 
     /** U-10: 장비고장(UP_BREAKDOWN) 중 minMinutes 이상인 구간을 설비별로 합쳐 긴 순으로 */

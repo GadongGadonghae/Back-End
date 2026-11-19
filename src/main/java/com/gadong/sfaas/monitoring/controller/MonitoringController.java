@@ -4,8 +4,10 @@ import com.gadong.sfaas.monitoring.dto.MonitoringDtos.*;
 import com.gadong.sfaas.monitoring.service.MonitoringService;
 import com.gadong.sfaas.monitoring.service.TodayStats;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -50,14 +52,17 @@ public class MonitoringController {
     }
 
     @Operation(summary = "M-03 설비 공정 값 추이 (상·하한선 포함)",
-            description = "P1. interval=raw 는 사이클 값 그대로, 5s 는 조회 때 5초 평균을 계산해요(저장하지 않음).")
+            description = "P1. interval=raw 는 사이클 값 그대로, 5s 는 조회 때 5초 평균을 계산해요(저장하지 않음). "
+                    + "after(선택, 11/19)를 주면 그 시각보다 뒤의 점만 줘요 → 주기 조회 때 마지막 점 시각을 넣으면 새 점만 받아요.")
     @GetMapping("/equipments/{equipmentId}/metrics")
     public MetricsResponse metrics(@PathVariable String equipmentId,
                                    @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                    @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                    @RequestParam(required = false) String metric,
-                                   @RequestParam(defaultValue = "raw") String interval) {
-        return service.metrics(equipmentId, from, to, metric, interval);
+                                   @RequestParam(defaultValue = "raw") String interval,
+                                   @Parameter(description = "이 시각보다 뒤(초과)의 점만. 예: 2026-11-19T10:24:33.123+09:00 (응답 points[].ts 그대로)")
+                                   @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime after) {
+        return service.metrics(equipmentId, from, to, metric, interval, after);
     }
 
     @Operation(summary = "M-12 공정 상세: 공정별 설비 목록·상태·원인", description = "P1. lineId 를 생략하면 전체예요.")

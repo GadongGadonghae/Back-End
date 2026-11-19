@@ -75,4 +75,23 @@ public final class MonitoringDtos {
 
     /** M-15 설비별 사이클 수·평균 CT(ms). 행이 1개 이하면 avgCtMs는 null */
     public record CycleResponse(String equipmentId, long cycles, Long avgCtMs) {}
+
+    /** M-16 코일 입고 현황. 1롤 = 제품 20개. 재고는 그날 끝(오늘이면 지금)까지 입고 합 − 슬리팅에 들어간 수 */
+    public record CoilTodayResponse(String date,
+                                    @Schema(description = "그날 입고한 롤 수 (coil_receipt 행 수)") int receivedRolls,
+                                    @Schema(description = "그날 입고한 제품 수 (product_qty 합)") int receivedQty,
+                                    @Schema(description = "슬리팅 앞 코일 재고, 제품 수 (M-13 COIL 재공과 같음)") int stockQty,
+                                    @Schema(description = "코일 재고, 롤 (stockQty ÷ 20, 소수 1자리. 예: 74개 → 3.7)") double stockRolls,
+                                    @Schema(description = "그날 슬리팅에 들어간 제품 수") int inputQty,
+                                    List<CoilReceiptItem> receipts) {
+        public record CoilReceiptItem(String materialId, OffsetDateTime receivedAt, int productQty) {}
+    }
+
+    /** M-17 공장 안 제품 위치 (3D 물류). 입고 뒤·출고 전, 공정 불량(폐기)은 빼요 */
+    public record FlowPositionsResponse(OffsetDateTime at, List<ProductPosition> products) {
+        /** equipmentId(설비 안 처리 중)와 pile(공정 사이 재공) 중 하나만 값이 있어요 */
+        public record ProductPosition(String productId, String lineId,
+                                      @Schema(description = "처리 중인 설비. 기다리는 중이면 null") String equipmentId,
+                                      @Schema(description = "SL-PR · PR-WD · WD-PT (라인 안) · PT1:PT-VI · PT2:PT-VI. 처리 중이면 null") String pile) {}
+    }
 }

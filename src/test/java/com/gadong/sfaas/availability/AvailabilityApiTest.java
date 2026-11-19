@@ -104,7 +104,12 @@ class AvailabilityApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reasonCode").value("UP_DELAY"))
                 .andExpect(jsonPath("$.actionUserId").value(1))
-                .andExpect(jsonPath("$.actionUserName").value("김정비"));
+                .andExpect(jsonPath("$.actionUserName").value("김정비"))
+                // 11/19: 응답이 비가동 1건 전체 → 프론트가 목록을 다시 찾지 않아도 돼요
+                .andExpect(jsonPath("$.eventId").value(2))
+                .andExpect(jsonPath("$.memo").value("자재 대기"))
+                .andExpect(jsonPath("$.equipmentId").exists())
+                .andExpect(jsonPath("$.actionAt").exists());
         em.flush();
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0").param("reasonCode", "UP_DELAY"))
                 .andExpect(jsonPath("$.items[0].actionUserName").value("김정비"))

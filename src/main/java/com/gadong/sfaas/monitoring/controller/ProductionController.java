@@ -2,6 +2,8 @@ package com.gadong.sfaas.monitoring.controller;
 
 import com.gadong.sfaas.global.response.PageResponse;
 import com.gadong.sfaas.monitoring.dto.MonitoringDtos.*;
+import com.gadong.sfaas.monitoring.service.CoilStats;
+import com.gadong.sfaas.monitoring.service.FlowStats;
 import com.gadong.sfaas.monitoring.service.MonitoringService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -23,9 +25,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProductionController {
 
     private final MonitoringService service;
+    private final CoilStats coilStats;
+    private final FlowStats flowStats;
 
-    public ProductionController(MonitoringService service) {
+    public ProductionController(MonitoringService service, CoilStats coilStats, FlowStats flowStats) {
         this.service = service;
+        this.coilStats = coilStats;
+        this.flowStats = flowStats;
     }
 
     @Operation(summary = "M-07 출고 양품/불량 카운트",
@@ -64,6 +70,23 @@ public class ProductionController {
                                  @Parameter(description = "도장 설비(PT1·PT2). 주면 그 도장의 앞(용접→도장)·뒤(도장→검사) 재공만 줘요")
                                  @RequestParam(required = false) String paintId) {
         return service.wip(lineId, paintId);
+    }
+
+    @Operation(summary = "M-16 코일 입고 현황",
+            description = "그날 입고 롤 수·제품 수, 슬리팅 앞 코일 재고(제품 수·롤), 슬리팅 투입 수, 입고 목록. date 생략 시 오늘. "
+                    + "1롤 = 제품 20개. 재고는 그날 끝(오늘이면 지금)까지 누적이라 전날 남은 코일도 들어가요")
+    @GetMapping("/coil/today")
+    public CoilTodayResponse coilToday(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return coilStats.today(date);
+    }
+
+    @Operation(summary = "M-17 공장 안 제품 위치 (3D 물류)",
+            description = "입고 뒤·출고 전 제품마다 지금 위치(product_flow 마지막 기록). 설비 안에서 처리 중이면 equipmentId, "
+                    + "공정 사이에서 기다리면 pile(SL-PR·PR-WD·WD-PT·PT1:PT-VI·PT2:PT-VI). 공정 불량(폐기)·출고 제품과 프레스 단 사이 재공은 빼요. "
+                    + "프론트가 1초마다 불러요 (나중에 웹소켓 /topic/flow로 바꿔도 모양은 같음)")
+    @GetMapping("/production/flow/positions")
+    public FlowPositionsResponse flowPositions() {
+        return flowStats.flowPositions();
     }
 
     @Operation(summary = "E-01 설비 데이터 조회 (공정별 테이블의 사이클 단위 행)",

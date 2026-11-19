@@ -25,6 +25,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -98,6 +99,11 @@ public class MonitoringService {
 
     /** M-03: 상·하한은 threshold(M-10과 같은 값)예요. 명세에서 기준이 미정이라 바뀔 수 있어요 */
     public MetricsResponse metrics(String equipmentId, LocalDate from, LocalDate to, String metric, String interval) {
+        return metrics(equipmentId, from, to, metric, interval, null);
+    }
+
+    /** after가 있으면 그 시각보다 뒤(초과)의 점만 (주기 조회로 새 점만 받기, 11/19) */
+    public MetricsResponse metrics(String equipmentId, LocalDate from, LocalDate to, String metric, String interval, OffsetDateTime after) {
         Checks.period(from, to);
         if (!"raw".equals(interval) && !"5s".equals(interval)) throw invalid("interval은 raw 또는 5s입니다");
         Equipment equipment = masterService.equipment(equipmentId);
@@ -115,13 +121,19 @@ public class MonitoringService {
                 .collect(Collectors.toMap(Threshold::getItemName, Function.identity(), (a, b) -> a));
         MapSqlParameterSource p = new MapSqlParameterSource().addValue("eq", equipmentId)
                 .addValue("from", Kst.start(from)).addValue("to", Kst.endExclusive(to));
+        String timeCol = stage == null ? "x.measured_at" : "f.ended_at";
+        String afterCond = "";
+        if (after != null) {
+            afterCond = " AND " + timeCol + " > :after";
+            p.addValue("after", Kst.local(after));
+        }
         String cols = columns.stream().map(c -> "x." + c).collect(Collectors.joining(", "));
         List<Map<String, Object>> rows = jdbc.queryForList(stage == null
                 ? "SELECT x.measured_at, x.result, " + cols + " FROM " + table.get().name() + " x"
-                        + " WHERE x.equipment_id = :eq AND x.measured_at >= :from AND x.measured_at < :to ORDER BY x.measured_at"
+                        + " WHERE x.equipment_id = :eq AND x.measured_at >= :from AND x.measured_at < :to" + afterCond + " ORDER BY x.measured_at"
                 : "SELECT f.ended_at AS measured_at, x.result, " + cols + " FROM press_data x"
                         + " JOIN product_flow f ON f.product_id = x.product_id AND f.equipment_id = :eq"
-                        + " WHERE x." + stage + " IS NOT NULL AND f.ended_at >= :from AND f.ended_at < :to ORDER BY f.ended_at", p);
+                        + " WHERE x." + stage + " IS NOT NULL AND f.ended_at >= :from AND f.ended_at < :to" + afterCond + " ORDER BY f.ended_at", p);
 
         List<MetricsResponse.Series> series = new ArrayList<>();
         for (String c : columns) {
