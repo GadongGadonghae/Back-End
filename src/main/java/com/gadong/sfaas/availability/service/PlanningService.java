@@ -63,7 +63,7 @@ public class PlanningService {
         this.detailRepository = detailRepository;
     }
 
-    /** G-01. 실적 = 생산 수(검사 수 + 공정 불량 수). 계획이나 실적이 있는 (구간, 라인)마다 한 줄이에요 */
+    /** G-01. 실적 = 출고 양품 수(검사 OK, 대시보드 M-07 ok와 같음, 11/18 변경. 예전엔 검사 수 + 공정 불량 수). 계획이나 실적이 있는 (구간, 라인)마다 한 줄이에요 */
     public List<ProductionSummaryResponse> productionSummary(LocalDate from, LocalDate to, String unit, String lineId) {
         Checks.period(from, to);
         Periods.unit(unit);
@@ -75,7 +75,7 @@ public class PlanningService {
             sums.computeIfAbsent(key(t.getTargetDate(), t.getLineId(), unit), k -> new long[2])[0] += t.getTargetQty();
         }
         for (ProductionStats.Row r : productionStats.daily(from, to, lineId)) {
-            if (r.lineId() != null) sums.computeIfAbsent(key(r.day(), r.lineId(), unit), k -> new long[2])[1] += r.total();
+            if (r.lineId() != null) sums.computeIfAbsent(key(r.day(), r.lineId(), unit), k -> new long[2])[1] += r.ok();
         }
         return sums.entrySet().stream().map(e -> {
             String[] k = e.getKey().split("\\|");

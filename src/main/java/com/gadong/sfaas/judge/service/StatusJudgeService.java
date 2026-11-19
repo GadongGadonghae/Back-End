@@ -32,7 +32,7 @@ public class StatusJudgeService {
 
     /** 한 번 판정할 때 읽은 값 */
     record Snapshot(LocalDateTime now, Map<String, LocalDateTime> lastSeen, Set<String> fault, Map<String, Long> planned,
-                    Map<String, Long> upstream) {}
+                    Map<String, Long> upstream, Set<String> startedToday) {}
 
     private final NamedParameterJdbcTemplate jdbc;
     private final MonitoringService monitoringService;
@@ -72,7 +72,7 @@ public class StatusJudgeService {
                         new MapSqlParameterSource("now", s.now()).addValue("d", openDowntime.get(e.id())));
             }
             Long downtimeId = switch (d.status()) {
-                case "I", "D" -> openEvent(e.id(), d, s.now());
+                case "I", "D" -> d.code() == null ? null : openEvent(e.id(), d, s.now()); // 첫 제품 전 대기는 이벤트 없음
                 case "S" -> d.plannedEventId();
                 default -> null; // R·DC는 이벤트 없음
             };
@@ -95,7 +95,10 @@ public class StatusJudgeService {
         if (seen == null || seen.isBefore(s.now().minusSeconds(DC_SECONDS))) return new Decision("DC", null, null);
         Long planned = s.planned().get(e.id()); // 공용 설비(도장·검사)는 S-02가 이벤트를 만들지 않아서 S가 안 나와요
         if (planned != null) return new Decision("S", null, planned);
-        if (s.upstream().getOrDefault(e.id(), 0L) <= 0) return new Decision("I", "UP_SHORTAGE", null);
+        if (s.upstream().getOrDefault(e.id(), 0L) <= 0) {
+            // 오늘 첫 제품이 들어오기 전 대기는 가동 준비라 비가동이 아니에요 (상태는 I로 보여 주되 사유·비가동 이벤트 없음, 11/18)
+            return new Decision("I", s.startedToday().contains(e.id()) ? "UP_SHORTAGE" : null, null);
+        }
         return new Decision("R", null, null);
     }
 
@@ -117,7 +120,11 @@ public class StatusJudgeService {
         Map<String, Long> planned = new HashMap<>();
         jdbc.query("SELECT equipment_id, downtime_id FROM downtime_event WHERE status = 'S' AND ended_at IS NULL AND started_at <= :now",
                 Map.of("now", now), rs -> { planned.put(rs.getString(1), rs.getLong(2)); });
-        return new Snapshot(now, lastSeen, fault, planned, upstream(equipment));
+        // 오늘 제품이 한 번이라도 들어온 설비 (첫 제품 전 대기를 비가동에서 빼려고)
+        Set<String> startedToday = new HashSet<>(jdbc.queryForList(
+                "SELECT DISTINCT equipment_id FROM product_flow WHERE started_at >= :day",
+                Map.of("day", now.toLocalDate().atStartOfDay()), String.class));
+        return new Snapshot(now, lastSeen, fault, planned, upstream(equipment), startedToday);
     }
 
     /**

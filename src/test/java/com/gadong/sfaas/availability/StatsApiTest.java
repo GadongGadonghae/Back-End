@@ -224,8 +224,8 @@ class StatsApiTest {
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].lineId").value("A"))
                 .andExpect(jsonPath("$[0].planQty").value(10))
-                .andExpect(jsonPath("$[0].actualQty").value(5))
-                .andExpect(jsonPath("$[0].achievementRate").value(50.0))
+                .andExpect(jsonPath("$[0].actualQty").value(3)) // 출고 양품 = 검사 4 − 비전 NG 1 (공정 NG는 실적 아님)
+                .andExpect(jsonPath("$[0].achievementRate").value(30.0))
                 .andExpect(jsonPath("$[1].lineId").value("B"))
                 .andExpect(jsonPath("$[1].planQty").value(0))
                 .andExpect(jsonPath("$[1].achievementRate").value(0.0));

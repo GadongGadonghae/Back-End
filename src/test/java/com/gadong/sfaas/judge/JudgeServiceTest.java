@@ -78,8 +78,11 @@ class JudgeServiceTest {
 
     @Test
     void statusJudge_followsPriority_andLinksDowntime() {
-        // A-PR1 고장 신호, A-PR4 신호 없음, A-WD 신호 정상 + 이동 기록 없음(처리 중도, 앞 재공도 없음) → 대기
+        // A-PR1 고장 신호, A-PR4 신호 없음, A-WD 신호 정상 + 처리 중도 앞 재공도 없음 → 대기
+        // A-WD는 오늘 이미 제품 1개를 처리했어요 → 첫 제품 전 대기가 아니라서 비가동(UP_SHORTAGE)
         jdbc.update("insert into equipment_signal(equipment_id, last_seen_at, fault) values ('A-PR1', CURRENT_TIMESTAMP, 1), ('A-WD', CURRENT_TIMESTAMP, 0)");
+        jdbc.update("insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
+                + "('Z0', 'A-WD', 'A', DATEADD('SECOND', -60, CURRENT_TIMESTAMP), DATEADD('SECOND', -43, CURRENT_TIMESTAMP))");
         processJudge.judge();
         statusJudge.judge();
         assertThat(status("A-PR1")).isEqualTo("D");
@@ -108,6 +111,26 @@ class JudgeServiceTest {
         assertThat(status("A-PR1")).isEqualTo("D");
         assertThat(jdbc.queryForObject("select d.code from equipment_status_history h join downtime_event d on d.downtime_id = h.downtime_id"
                 + " where h.equipment_id = 'A-WD' and h.ended_at is null", String.class)).isEqualTo("PL_TEST");
+    }
+
+    @Test
+    void statusJudge_firstIdleOfDay_isNotDowntime() {
+        // 오늘 아직 제품이 한 번도 안 들어온 용접 → 상태는 I, 비가동 이벤트·사유는 없음 (가동 시작 직후 대기)
+        jdbc.update("insert into equipment_signal(equipment_id, last_seen_at, fault) values ('A-WD', CURRENT_TIMESTAMP, 0)");
+        statusJudge.judge();
+        assertThat(status("A-WD")).isEqualTo("I");
+        assertThat(jdbc.queryForObject("select count(*) from downtime_event where equipment_id = 'A-WD'", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select downtime_id from equipment_status_history where equipment_id = 'A-WD' and ended_at is null",
+                Long.class)).isNull();
+
+        // 첫 제품이 들어왔다 나간 뒤 다시 기다리면 그때부터는 비가동(UP_SHORTAGE)
+        jdbc.update("insert into product_flow(product_id, equipment_id, line_id, started_at) values ('Z0', 'A-WD', 'A', CURRENT_TIMESTAMP)");
+        statusJudge.judge();
+        assertThat(status("A-WD")).isEqualTo("R");
+        jdbc.update("update product_flow set ended_at = CURRENT_TIMESTAMP where product_id = 'Z0'");
+        statusJudge.judge();
+        assertThat(status("A-WD")).isEqualTo("I");
+        assertThat(jdbc.queryForList("select code from downtime_event where equipment_id = 'A-WD'", String.class)).containsExactly("UP_SHORTAGE");
     }
 
     private String status(String id) {
