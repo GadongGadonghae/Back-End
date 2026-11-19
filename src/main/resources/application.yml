@@ -30,3 +30,15 @@ jwt:
 mqtt:
   broker-url: tcp://localhost:1883
   topic-raw: sfaas/raw/#
+
+# AI 계획수정 보고서 (report 패키지). 기본값은 API 키 없이 동작하는 시연 모드(mock)
+# 운영 전환: AI_REPORT_MOCK=false, AI_REPORT_API_KEY, AI_REPORT_MODEL 환경 변수 (키는 Git에 올리지 않아요)
+ai:
+  report:
+    mock: ${AI_REPORT_MOCK:true}
+    base-url: ${AI_REPORT_BASE_URL:https://api.openai.com/v1}
+    api-key: ${AI_REPORT_API_KEY:}
+    model: ${AI_REPORT_MODEL:gpt-4.1-mini}
+    timeout-seconds: ${AI_REPORT_TIMEOUT_SECONDS:30}   # LLM 연결·응답 제한 시간. 넘으면 템플릿 문장으로 대체
+    # 재배정 후보 라인 상태 (RSID). D(고장)·S(계획정지)는 제외. I(대기) 포함 여부는 팀 확정 후 조정
+    allocatable-statuses: R,DC,I
