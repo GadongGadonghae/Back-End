@@ -32,7 +32,7 @@ import org.springframework.web.client.HttpClientErrorException;
 @SpringBootTest(properties = {
         "slack.webhook-url=https://hooks.slack.test/services/T/B/X",
         "slack.app-base-url=http://192.168.0.50/"})
-@WithMockUser(username = "u1", roles = "PRODUCTION_MANAGER")
+@WithMockUser(username = "u1", roles = "PROD_LEAD")
 @AutoConfigureMockMvc
 @Transactional
 class SlackNotifyApiTest {

@@ -16,7 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** 웹훅 주소가 없으면 LLM을 부르기 전에 503 으로 알려 줘요 */
 @SpringBootTest
-@WithMockUser(username = "u1", roles = "PRODUCTION_MANAGER")
+@WithMockUser(username = "u1", roles = "PROD_LEAD")
 @AutoConfigureMockMvc
 @Transactional
 class SlackNotConfiguredTest {
