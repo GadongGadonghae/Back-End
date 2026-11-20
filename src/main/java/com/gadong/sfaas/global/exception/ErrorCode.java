@@ -26,6 +26,10 @@ public enum ErrorCode {
     LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "아이디 또는 비밀번호가 올바르지 않습니다"),
     // 11/20 계정 권한: 로그인은 했지만 이 기능을 쓸 권한이 없음 (auth.Roles)
     FORBIDDEN(HttpStatus.FORBIDDEN, "이 기능을 쓸 권한이 없습니다"),
+
+    // N-01 슬랙 전송: 웹훅 주소가 없음 / 슬랙이 거절하거나 연결 실패
+    SLACK_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, "슬랙 웹훅 주소가 설정되지 않았습니다 (slack.webhook-url)"),
+    SLACK_SEND_FAILED(HttpStatus.BAD_GATEWAY, "슬랙 전송에 실패했습니다"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다");
 
     private final HttpStatus status;
