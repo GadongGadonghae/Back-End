@@ -21,6 +21,8 @@ public enum ErrorCode {
     USER_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 사용 중인 로그인 ID입니다"),
 
     LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "아이디 또는 비밀번호가 올바르지 않습니다"),
+    // 11/20 계정 권한: 로그인은 했지만 이 기능을 쓸 권한이 없음 (auth.Roles)
+    FORBIDDEN(HttpStatus.FORBIDDEN, "이 기능을 쓸 권한이 없습니다"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다");
 
     private final HttpStatus status;

@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
 import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -58,6 +59,7 @@ public class AlarmController {
     }
 
     @Operation(summary = "M-11 알람 기준치 수정", description = "P1")
+    @PreAuthorize("hasRole('PRODUCTION_MANAGER')") // 관리값 기준 설정 = 생산관리팀장만 (11/20)
     @PutMapping("/thresholds/{id}")
     public ThresholdUpdateResponse updateThreshold(@PathVariable int id, @RequestBody ThresholdUpdateRequest request) {
         return service.updateThreshold(id, request);

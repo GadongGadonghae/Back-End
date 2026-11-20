@@ -7,6 +7,7 @@ import com.gadong.sfaas.auth.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -22,7 +23,8 @@ public class UserController {
         this.userService = userService;
     }
 
-    // C-02: 사용자 목록 조회
+    // C-02: 사용자 목록 조회 (사용자 관리 = 공장장만, 11/20)
+    @PreAuthorize("hasRole('PLANT_MANAGER')")
     @GetMapping
     public ResponseEntity<List<UserResponse>> getUsers(
         @RequestParam(defaultValue = "0") int page,
@@ -31,7 +33,8 @@ public class UserController {
         return ResponseEntity.ok(userService.getUsers(page, size));
     }
 
-    // C-03: 사용자 등록
+    // C-03: 사용자 등록 (공장장만)
+    @PreAuthorize("hasRole('PLANT_MANAGER')")
     @PostMapping
     public ResponseEntity<Map<String, String>> createUser(
         @Valid @RequestBody UserCreateRequest request

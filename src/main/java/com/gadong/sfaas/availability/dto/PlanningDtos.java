@@ -18,9 +18,9 @@ public final class PlanningDtos {
 
     public record PlanRequest(String lineId, Integer planQty) {}
 
-    /** R-01. code는 고장 사유 코드(downtime_event.code) */
+    /** R-01. code는 고장 사유 코드(downtime_event.code). approved = 공장장 승인(결재) 여부 (11/20) */
     public record ReassignmentReportResponse(long reportId, long downtimeId, String sourceLineId, String equipmentId, long stopMin,
-                                             int lossQty, OffsetDateTime createdAt, String code) {}
+                                             int lossQty, OffsetDateTime createdAt, String code, boolean approved) {}
 
     /**
      * R-02 · R-03. 앞 5칸(reportId~details)은 처음 명세 그대로, 나머지는 v0.3.10 계획수정 보고서 화면용이에요.
@@ -32,7 +32,9 @@ public final class PlanningDtos {
                                              String equipmentId, String code, String detail, OffsetDateTime startedAt,
                                              OffsetDateTime createdAt, String createdBy, String kind, OffsetDateTime baseAt,
                                              Long remainingSec, Double ctSec, Integer stoppedPlan, Integer stoppedDone,
-                                             Integer targetQty, Integer unmetQty, AiContent ai) {
+                                             Integer targetQty, Integer unmetQty, AiContent ai,
+                                             @Schema(description = "공장장 승인(결재) 여부·승인자 이름·시각 (11/20, R-04)") boolean approved,
+                                             String approvedBy, OffsetDateTime approvedAt) {
         /** targetLineId는 라인 ID, 도장 보고서면 설비 ID(PT1·PT2). share = 남은 능력 비율(%) */
         public record Target(String targetLineId, int spareCapacity, int addQty, Integer remainingPlan, double share) {}
 

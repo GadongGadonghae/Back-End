@@ -21,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** 생산 계획(G-02·G-03)과 재배정 보고서(R-01·R-02)를 H2 데이터로 확인해요. */
 @SpringBootTest
-@WithMockUser(username = "testuser", roles = "MANAGER") // API는 로그인 필요 (SecurityConfig)
+@WithMockUser(username = "testuser", roles = "PLANT_MANAGER") // API는 로그인 필요 (SecurityConfig)
 @AutoConfigureMockMvc
 @Transactional
 class PlanningApiTest {
@@ -68,7 +68,7 @@ class PlanningApiTest {
     }
 
     @Test
-    @WithMockUser(username = "u1", roles = "ADMIN")
+    @WithMockUser(username = "u1", roles = "PLANT_MANAGER")
     void g03SavesWhoChangedPlan() throws Exception {
         // 저장한 로그인 사용자 이름이 G-02 응답에 (11/20)
         mvc.perform(put("/api/production/plans/2026-11-18").contentType(MediaType.APPLICATION_JSON)
@@ -103,8 +103,7 @@ class PlanningApiTest {
         mvc.perform(get("/api/reassignments/999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("REASSIGNMENT_NOT_FOUND"));
-        mvc.perform(patch("/api/reassignments/12/approve").contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isNotFound()); // 승인 API는 없어요(v3)
+        // 승인(결재)은 11/20부터 POST /reassignments/{id}/approve (공장장만) → ReplanApiTest.r04PlantManagerApproves_othersForbidden
     }
 
     @Test

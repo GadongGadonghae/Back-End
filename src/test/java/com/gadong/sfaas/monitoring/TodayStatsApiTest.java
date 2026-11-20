@@ -45,6 +45,7 @@ class TodayStatsApiTest {
                 "insert into press_data(product_id, equipment_id, measured_at, pressure_left, pressure_right, pressure_diff, press_time) values "
                         + "('X1','A-PR4','2026-11-10 08:59:17',275,271,4,551), ('X2','A-PR4','2026-11-10 08:59:34',276,272,4,550), "
                         + "('X3','A-PR1','2026-11-10 08:59:51',277,null,null,null)",
+                "update press_data set result = 'NG' where product_id = 'X3'", // PR1에서 NG → 폐기 (A-PR1 불량 1)
                 // 단마다 들어간·나간 시각. PR1은 17초마다 3개, PR4는 2개 (PR2·PR3은 이 시드에 없음)
                 "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
                         + "('X1','A-PR1','A','2026-11-10 08:59:00','2026-11-10 08:59:17'), ('X2','A-PR1','A','2026-11-10 08:59:17','2026-11-10 08:59:34'), "
@@ -63,15 +64,18 @@ class TodayStatsApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].equipmentId").value("A-WD"))
                 .andExpect(jsonPath("$[0].cycles").value(4))
-                .andExpect(jsonPath("$[0].avgCtMs").value(20000)); // 간격 중앙값이라 멈춘 1시간이 안 끼어요
+                .andExpect(jsonPath("$[0].avgCtMs").value(20000)) // 간격 중앙값이라 멈춘 1시간이 안 끼어요
+                .andExpect(jsonPath("$[0].ng").value(0));
         mvc.perform(get("/api/monitoring/processes/PRESS/cycles").param("date", DAY).param("lineId", "A"))
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$[0].cycles").value(3))
                 .andExpect(jsonPath("$[0].avgCtMs").value(17000)) // 단마다 들어간 시각 간격 (product_flow)
+                .andExpect(jsonPath("$[0].ng").value(1)) // X3이 PR1에서 NG (11/20 라인 흐름 설비 칸 불량 수)
                 .andExpect(jsonPath("$[1].equipmentId").value("A-PR4"))
                 .andExpect(jsonPath("$[1].cycles").value(2))
-                .andExpect(jsonPath("$[1].avgCtMs").value(17000));
+                .andExpect(jsonPath("$[1].avgCtMs").value(17000))
+                .andExpect(jsonPath("$[1].ng").value(0));
         mvc.perform(get("/api/monitoring/processes/NOPE/cycles")).andExpect(status().isBadRequest());
     }
 

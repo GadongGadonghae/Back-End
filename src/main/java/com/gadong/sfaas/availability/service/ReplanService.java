@@ -190,6 +190,19 @@ public class ReplanService {
         };
     }
 
+    // ── R-04 승인(결재) ──
+
+    /** 공장장이 보고서를 승인해요 (결재). 계획을 실제로 바꾸지는 않아요 */
+    @Transactional
+    public ReassignmentDetailResponse approve(long reportId) {
+        ReassignmentReport r = reportRepository.findById(reportId).orElseThrow(() ->
+                new BusinessException(ErrorCode.REASSIGNMENT_NOT_FOUND, "재배정 보고서 " + reportId + "를 찾을 수 없습니다"));
+        User user = currentUser();
+        r.approve(user == null ? null : user.getUserId(), Kst.now());
+        reportRepository.flush();
+        return toResponse(r);
+    }
+
     // ── R-02 조회 ──
 
     public ReassignmentDetailResponse report(long reportId) {
@@ -211,7 +224,10 @@ public class ReplanService {
         return new ReassignmentDetailResponse(r.getReportId(), r.getDowntimeId(), f.lineId(), r.getLossQty(), details, documentNo,
                 f.equipmentId(), f.code(), f.detail(), Kst.of(f.start()), Kst.of(r.getCreatedAt()), createdBy, r.getKind(),
                 Kst.of(r.getBaseAt()), remainingSec, r.getCtSec() == null ? null : r.getCtSec().doubleValue(),
-                r.getStoppedPlan(), r.getStoppedDone(), r.getTargetQty(), r.getUnmetQty(), ai(r.getAiContent()));
+                r.getStoppedPlan(), r.getStoppedDone(), r.getTargetQty(), r.getUnmetQty(), ai(r.getAiContent()),
+                Boolean.TRUE.equals(r.getApproved()),
+                r.getApprovedBy() == null ? null : userRepository.findById(r.getApprovedBy()).map(User::getUserName).orElse(null),
+                Kst.of(r.getApprovedAt()));
     }
 
     // ── 조회 도우미 ──

@@ -28,6 +28,13 @@ public class ReassignmentReport {
     @Column(name = "unmet_qty") private Integer unmetQty;
     @Column(name = "ai_content", columnDefinition = "TEXT") private String aiContent;
 
+    /** R-04 공장장 승인(결재). 이미 승인된 보고서도 다시 누르면 승인자·시각을 새로 써요 */
+    public void approve(Integer userId, LocalDateTime at) {
+        this.approved = true;
+        this.approvedBy = userId;
+        this.approvedAt = at;
+    }
+
     public ReassignmentReport(Long downtimeId, int lossQty, LocalDateTime createdAt, Integer createdBy, String kind, LocalDateTime baseAt,
                               BigDecimal ctSec, int stoppedPlan, int stoppedDone, Integer targetQty, int unmetQty, String aiContent) {
         this.downtimeId = downtimeId;

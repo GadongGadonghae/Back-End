@@ -34,7 +34,7 @@ class UserApiTest {
             "testadmin",
             encoder.encode("admin1234"),
             "테스트관리자",
-            "MANAGER"
+            "PLANT_MANAGER"
         );
 
         String response = mvc.perform(post("/api/auth/login")
@@ -77,7 +77,7 @@ class UserApiTest {
                       "loginId": "worker01",
                       "password": "worker1234",
                       "userName": "작업자1",
-                      "role": "MANAGER",
+                      "role": "PRODUCTION_MANAGER",
                       "email": "worker@sfaas.local",
                       "memo": "테스트 계정"
                     }
@@ -114,10 +114,27 @@ class UserApiTest {
                       "loginId": "testadmin",
                       "password": "another1234",
                       "userName": "중복사용자",
-                      "role": "MANAGER"
+                      "role": "PRODUCTION_MANAGER"
                     }
                     """))
             .andExpect(status().isConflict())
             .andExpect(jsonPath("$.code").value("USER_ALREADY_EXISTS"));
+    }
+
+    @Test
+    @org.springframework.security.test.context.support.WithMockUser(username = "pm", roles = "PRODUCTION_MANAGER")
+    void onlyPlantManagerManagesUsers() throws Exception {
+        // 11/20 계정 권한: 사용자 관리는 공장장만 → 생산관리팀장은 403
+        mvc.perform(get("/api/users")).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createUserRejectsUnknownRole() throws Exception {
+        String token = createAdminAndGetToken();
+        mvc.perform(post("/api/users").header("Authorization", "Bearer " + token).contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"loginId": "x1", "password": "pw123456", "userName": "엑스", "role": "ADMIN"}
+                    """))
+            .andExpect(status().isBadRequest());
     }
 }

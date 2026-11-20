@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -61,13 +62,14 @@ public class PlanningController {
     }
 
     @Operation(summary = "G-03 일 생산 계획(목표) 설정", description = "P2")
+    @PreAuthorize("hasRole('PLANT_MANAGER')") // 생산 목표 설정 = 공장장만 (11/20)
     @PutMapping("/production/plans/{date}")
     public PlanResponse setPlan(@PathVariable @DateTimeFormat(pattern = DATE) LocalDate date,
                                 @RequestBody PlanRequest request) {
         return service.setPlan(date, request);
     }
 
-    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. code = 고장 사유 코드. 보고서는 R-03으로 만들고 승인은 없어요.")
+    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. code = 고장 사유 코드. 보고서는 R-03으로 만들고(생산관리팀장), R-04로 공장장이 승인(결재)해요. approved = 승인 여부.")
     @GetMapping("/reassignments")
     public PageResponse<ReassignmentReportResponse> reports(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                             @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
@@ -89,10 +91,19 @@ public class PlanningController {
                     + "오늘 고장이면 지금 기준, 지난 날이면 고장 시작 기준. 누를 때마다 새 보고서예요. "
                     + "additionalRequest(선택, 500자): \"A라인은 제외\", \"F라인 정지\", \"납기 우선\" 등 → 제외·정지 라인은 배정에서 빠지고 해석 결과는 ai.requestInterpretation. "
                     + "AI 문장은 키가 없거나 실패하면 템플릿(ai.mock=true, ai.fallbackReason). 계획은 제안만 하고 바꾸지 않아요.")
+    @PreAuthorize("hasRole('PRODUCTION_MANAGER')") // AI 리포트 작성 = 생산관리팀장만 (11/20)
     @PostMapping("/reassignments")
     @ResponseStatus(HttpStatus.CREATED)
     public ReassignmentDetailResponse createReport(@RequestBody ReassignmentCreateRequest request) {
         return replanService.create(request == null ? null : request.downtimeId(), request == null ? null : request.additionalRequest());
+    }
+
+    @Operation(summary = "R-04 AI 계획수정 보고서 승인(결재)",
+            description = "11/20. 공장장만. 보고서에 승인 여부·승인자·시각을 남기고 R-02 모양으로 줘요. 생산계획을 실제로 바꾸지는 않아요.")
+    @PreAuthorize("hasRole('PLANT_MANAGER')")
+    @PostMapping("/reassignments/{reportId}/approve")
+    public ReassignmentDetailResponse approveReport(@PathVariable long reportId) {
+        return replanService.approve(reportId);
     }
 
     @Operation(summary = "S-01 계획정지 조회 (진행 중 + 이력)",

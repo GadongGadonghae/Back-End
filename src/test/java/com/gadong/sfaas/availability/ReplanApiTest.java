@@ -1,5 +1,6 @@
 package com.gadong.sfaas.availability;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -22,7 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 목표 A·B·C 100개씩, 12시 전 양품 A 2 · B 1 · C 0 → 부족 98, 남은 능력 B 2541−99=2442 · C 2541−100=2441 → B 49 · C 49
  */
 @SpringBootTest
-@WithMockUser(username = "u1", roles = "MANAGER")
+@WithMockUser(username = "u1", roles = "PRODUCTION_MANAGER")
 @AutoConfigureMockMvc
 @Transactional
 class ReplanApiTest {
@@ -102,6 +103,34 @@ class ReplanApiTest {
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.items[0].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$.items[0].code").value("UP_BREAKDOWN"));
+    }
+
+    @Test
+    void r04PlantManagerApproves_othersForbidden() throws Exception {
+        // 11/20 계정 권한: 작성은 생산관리팀장(이 클래스 기본), 승인(결재)은 공장장만
+        jdbc.update("insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_MANAGER')");
+        String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.approved").value(false))
+                .andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+        mvc.perform(post("/api/reassignments/" + id + "/approve")).andExpect(status().isForbidden());   // 생산관리팀장은 승인 못 함
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.approved").value(true))
+                .andExpect(jsonPath("$.approvedBy").value("박공장"))
+                .andExpect(jsonPath("$.approvedAt").exists());
+        mvc.perform(get("/api/reassignments").param("from", "2000-01-01").param("to", "2100-12-31"))
+                .andExpect(jsonPath("$.items[0].approved").value(true));
+        // 공장장·라인 담당자는 보고서를 만들 수 없어요
+        mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}")
+                        .with(user("boss").roles("PLANT_MANAGER")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}")
+                        .with(user("line").roles("LINE_MANAGER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/reassignments/999/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isNotFound());
     }
 
     @Test
