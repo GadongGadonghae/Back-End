@@ -18,8 +18,11 @@ public class CoilStats {
     /** 1롤 = 제품 20개 (DB 결정, coil_receipt.product_qty 기본값) */
     static final int ROLL_QTY = 20;
 
-    private static final String SLITTING_IN = "SELECT COUNT(*) FROM product_flow f JOIN equipment e ON e.equipment_id = f.equipment_id"
-            + " WHERE e.process_id = 'SLITTING' AND COALESCE(f.started_at, f.ended_at) >= :from AND COALESCE(f.started_at, f.ended_at) < :to";
+    // 슬리팅에 들어간 수 = 슬리팅 끝난 수(slitting_data, 시각 색인) + 지금 슬리팅 안에 있는 수(product_flow 처리 중)
+    // 11/20: product_flow 전체(100만 줄)에서 슬리팅 줄을 세면 0.2~1초 → 이렇게 세면 40ms. 끝날 때 두 테이블에 같이 써서 수가 같아요
+    private static final String SLITTING_IN = "SELECT (SELECT COUNT(*) FROM slitting_data WHERE measured_at >= :from AND measured_at < :to)"
+            + " + (SELECT COUNT(*) FROM product_flow f WHERE f.ended_at IS NULL AND f.started_at >= :from AND f.started_at < :to"
+            + " AND f.equipment_id IN (SELECT equipment_id FROM equipment WHERE process_id = 'SLITTING'))";
 
     private final NamedParameterJdbcTemplate jdbc;
 

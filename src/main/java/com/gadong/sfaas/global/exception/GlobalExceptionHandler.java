@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -25,6 +26,12 @@ public class GlobalExceptionHandler {
             MissingServletRequestParameterException.class, HttpMessageNotReadableException.class})
     ResponseEntity<ErrorResponse> invalid(Exception e) {
         return respond(ErrorCode.INVALID_REQUEST, ErrorCode.INVALID_REQUEST.defaultMessage());
+    }
+
+    /** @PreAuthorize 권한 부족 → 403 (아래 Exception 처리에 걸려 500이 되지 않게) */
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<ErrorResponse> forbidden(AccessDeniedException e) {
+        return respond(ErrorCode.FORBIDDEN, ErrorCode.FORBIDDEN.defaultMessage());
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

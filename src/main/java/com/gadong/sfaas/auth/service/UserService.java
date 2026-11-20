@@ -58,6 +58,12 @@ public class UserService {
             );
         }
 
+        // 1-1. 권한은 공장장·생산관리팀장·라인 담당자 중 하나 (11/20, auth.Roles)
+        if (!com.gadong.sfaas.auth.Roles.ALL.contains(request.role())) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST,
+                "role은 " + String.join(", ", com.gadong.sfaas.auth.Roles.ALL) + " 중 하나입니다");
+        }
+
         // 2. 비밀번호 BCrypt 암호화
         String passwordHash = passwordEncoder.encode(request.password());
 

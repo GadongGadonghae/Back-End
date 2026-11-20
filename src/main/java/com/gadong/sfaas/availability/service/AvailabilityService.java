@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -125,25 +126,79 @@ public class AvailabilityService {
         Checks.page(page, size);
         if (minMinutes < 0) throw invalid("minMinutes는 0 이상입니다");
         masterService.requireLine(lineId);
-        MapSqlParameterSource p = Sql.period(from, to);
-        StringBuilder where = new StringBuilder();
-        Sql.eq(where, p, "e.line_id", "lineId", lineId);
-        Sql.eq(where, p, "e.process_id", "process", process == null ? null : process.toUpperCase());
-        Sql.eq(where, p, "d.status", "status", status);
-        Sql.eq(where, p, "d.code", "reasonCode", reasonCode);
-        Sql.eq(where, p, "d.action_user_id", "actionUserId", actionUserId);
-        Sql.eq(where, p, "d.equipment_id", "eq", equipmentId);
-        if (inProgress != null) where.append(inProgress ? " AND d.ended_at IS NULL" : " AND d.ended_at IS NOT NULL");
+        // status: 쉼표로 여러 개 (예: D,DC). 11/20 전에는 'D,I,S'를 통째로 비교해서 아무것도 안 걸렸어요
+        List<String> statuses = status == null ? List.of() : Arrays.stream(status.split(","))
+                .map(s -> s.trim().toUpperCase()).filter(s -> !s.isEmpty()).distinct().toList();
+        for (String s : statuses) {
+            if (!STATUS_FILTERS.contains(s)) throw invalid("status는 S·I·D·DC 중에서 쉼표로 고릅니다: " + s);
+        }
+        List<String> stopStatuses = statuses.stream().filter(s -> !"DC".equals(s)).toList();
+        String proc = process == null ? null : process.toUpperCase();
+
+        List<Stop> all = new ArrayList<>();
+        if (statuses.isEmpty() || !stopStatuses.isEmpty()) {   // status를 안 보내면 지금처럼 S·I·D만 (DC는 고를 때만)
+            MapSqlParameterSource p = Sql.period(from, to);
+            StringBuilder where = new StringBuilder();
+            Sql.eq(where, p, "e.line_id", "lineId", lineId);
+            Sql.eq(where, p, "e.process_id", "process", proc);
+            if (!stopStatuses.isEmpty()) {
+                where.append(" AND d.status IN (:statuses)");
+                p.addValue("statuses", stopStatuses);
+            }
+            Sql.eq(where, p, "d.code", "reasonCode", reasonCode);
+            Sql.eq(where, p, "d.action_user_id", "actionUserId", actionUserId);
+            Sql.eq(where, p, "d.equipment_id", "eq", equipmentId);
+            if (inProgress != null) where.append(inProgress ? " AND d.ended_at IS NULL" : " AND d.ended_at IS NOT NULL");
+            all.addAll(stops(where, p));
+        }
+        // 통신 끊김(DC)은 비가동이 아니라서(가동으로 봄, 11/16) downtime_event에 없어요 → 상태 이력의 DC 구간을 같은 모양으로 붙여요.
+        // 사유 코드·조치 담당자가 없어서 그 조건을 걸면 빠져요
+        if (statuses.contains("DC") && reasonCode == null && actionUserId == null) {
+            all.addAll(commsLosses(from, to, lineId, proc, equipmentId, inProgress));
+            all.sort(Comparator.comparing(Stop::start).reversed().thenComparing(Comparator.comparingLong(Stop::id).reversed()));
+        }
 
         // shortcut: minMinutes 필터와 페이지 나누기를 메모리에서 해요. 기간 안 비가동이 수만 건을 넘으면 SQL로 옮겨요
-        // 진행 중인 건(D·I·S)은 1분이 안 돼도 바로 보여요 (알람 이력에 발생 즉시 "진행 중"으로, 11/20). minMinutes는 끝난 건에만 적용
-        List<Stop> stops = stops(where, p).stream()
+        // 진행 중인 건(D·I·S·DC)은 1분이 안 돼도 바로 보여요 (알람 이력에 발생 즉시 "진행 중"으로, 11/20). minMinutes는 끝난 건에만 적용
+        List<Stop> stops = all.stream()
                 .filter(s -> s.end() == null || s.minutes() >= minMinutes).toList();
         List<DowntimeEventResponse> content = stops.stream().skip((long) (page - 1) * size).limit(size)
                 .map(AvailabilityService::toResponse)
                 .toList();
         return new PageResponse<>(content, stops.size(), page, size);
     }
+
+    private static final List<String> STATUS_FILTERS = List.of("S", "I", "D", "DC");
+
+    /**
+     * U-08 통신 끊김: equipment_status_history의 DC 구간 (상태 신호 10초 이상 끊김). 비가동 번호와 겹치지 않게 eventId = −log_id.
+     * 메모 저장(U-09)은 안 돼요 (downtime_event가 아니라서). 공장 전체가 한꺼번에 끊긴 것(꺼짐·재생 끝)은 빼요
+     */
+    private List<Stop> commsLosses(LocalDate from, LocalDate to, String lineId, String process, String equipmentId, Boolean inProgress) {
+        // 기간 안 DC 구간 전부 (공장 꺼짐을 가려내려고 라인·설비 조건은 아래에서 메모리로 걸러요)
+        List<Stop> all = jdbc.query("""
+                SELECT s.log_id, s.equipment_id, e.line_id, e.process_id, s.started_at, s.ended_at
+                FROM equipment_status_history s JOIN equipment e ON e.equipment_id = s.equipment_id
+                WHERE s.status = 'DC' AND s.started_at < :to AND (s.ended_at IS NULL OR s.ended_at > :from)
+                ORDER BY s.started_at""", Sql.period(from, to), (rs, n) -> new Stop(-rs.getLong("log_id"), rs.getString("equipment_id"),
+                rs.getString("line_id"), rs.getString("process_id"), "DC", null,
+                rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class),
+                "상태 신호 10초 이상 끊김", null, null, null, null));
+        // 공장 꺼짐(백엔드 켜짐·재생 끝·Node-RED 정지): 가동 설비 절반 이상이 ±5초 안에 한꺼번에 DC → 통신 고장이 아니라서 빼요 (11/20)
+        Integer active = jdbc.queryForObject("SELECT COUNT(*) FROM equipment WHERE is_active = TRUE", Map.of(), Integer.class);
+        int plantWide = Math.max(2, (active == null ? 0 : active) / 2);
+        List<LocalDateTime> starts = all.stream().map(Stop::start).toList();
+        return all.stream()
+                .filter(s -> starts.stream().filter(t -> Math.abs(Duration.between(t, s.start()).getSeconds()) <= PLANT_OFF_SECONDS).count() < plantWide)
+                .filter(s -> lineId == null || lineId.equals(s.lineId()))
+                .filter(s -> process == null || process.equals(s.process()))
+                .filter(s -> equipmentId == null || equipmentId.equals(s.equipmentId()))
+                .filter(s -> inProgress == null || inProgress == (s.end() == null))
+                .toList();
+    }
+
+    /** 이 초 안에 가동 설비 절반 이상이 함께 DC가 되면 공장 꺼짐으로 봐요 */
+    private static final long PLANT_OFF_SECONDS = 5;
 
     private static DowntimeEventResponse toResponse(Stop s) {
         return new DowntimeEventResponse(s.id(), s.lineId(), s.equipmentId(), s.process(), s.status(), s.code(),
@@ -159,6 +214,7 @@ public class AvailabilityService {
     @Transactional
     public DowntimeEventResponse updateDowntimeEvent(long eventId, DowntimeEventUpdateRequest request) {
         if (request == null) throw invalid("요청 본문이 필요합니다");
+        if (eventId < 0) throw invalid("통신 끊김 기록에는 사유·메모를 저장할 수 없습니다");   // U-08의 DC 항목 (eventId = −상태 이력 번호)
         Downtime downtime = downtimeRepository.findById(eventId).orElseThrow(() ->
                 new BusinessException(ErrorCode.DOWNTIME_NOT_FOUND, "비가동 이력 " + eventId + "를 찾을 수 없습니다"));
         if (request.reasonCode() != null && !downtimeCodeRepository.existsById(request.reasonCode())) {

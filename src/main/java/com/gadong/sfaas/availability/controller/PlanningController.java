@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -61,13 +62,14 @@ public class PlanningController {
     }
 
     @Operation(summary = "G-03 일 생산 계획(목표) 설정", description = "P2")
+    @PreAuthorize("hasRole('PLANT_MANAGER')") // 생산 목표 설정 = 공장장만 (11/20)
     @PutMapping("/production/plans/{date}")
     public PlanResponse setPlan(@PathVariable @DateTimeFormat(pattern = DATE) LocalDate date,
                                 @RequestBody PlanRequest request) {
         return service.setPlan(date, request);
     }
 
-    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. code = 고장 사유 코드. 보고서는 R-03으로 만들고 승인은 없어요.")
+    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. code = 고장 사유 코드. 보고서는 R-03으로 만들고(생산관리팀장), R-04로 공장장이 승인(결재)해요. approved = 승인 여부.")
     @GetMapping("/reassignments")
     public PageResponse<ReassignmentReportResponse> reports(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                             @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
@@ -89,26 +91,38 @@ public class PlanningController {
                     + "오늘 고장이면 지금 기준, 지난 날이면 고장 시작 기준. 누를 때마다 새 보고서예요. "
                     + "additionalRequest(선택, 500자): \"A라인은 제외\", \"F라인 정지\", \"납기 우선\" 등 → 제외·정지 라인은 배정에서 빠지고 해석 결과는 ai.requestInterpretation. "
                     + "AI 문장은 키가 없거나 실패하면 템플릿(ai.mock=true, ai.fallbackReason). 계획은 제안만 하고 바꾸지 않아요.")
+    @PreAuthorize("hasRole('PRODUCTION_MANAGER')") // AI 리포트 작성 = 생산관리팀장만 (11/20)
     @PostMapping("/reassignments")
     @ResponseStatus(HttpStatus.CREATED)
     public ReassignmentDetailResponse createReport(@RequestBody ReassignmentCreateRequest request) {
         return replanService.create(request == null ? null : request.downtimeId(), request == null ? null : request.additionalRequest());
     }
 
-    @Operation(summary = "R-04 추가 주문 배정 검토 만들기",
+    @Operation(summary = "R-04 AI 계획수정 보고서 승인(결재)",
+            description = "11/20. 공장장만. 보고서에 승인 여부·승인자·시각을 남기고 R-02 모양으로 줘요. 생산계획을 실제로 바꾸지는 않아요. "
+                    + "추가 주문 배정(kind = order)은 R-06 승인·적용으로 승인해요.")
+    @PreAuthorize("hasRole('PLANT_MANAGER')")
+    @PostMapping("/reassignments/{reportId}/approve")
+    public ReassignmentDetailResponse approveReport(@PathVariable long reportId) {
+        return replanService.approve(reportId);
+    }
+
+    @Operation(summary = "R-05 추가 주문 배정 검토 만들기",
             description = "고장 건 없이, 추가 주문을 지금 가동 중인 라인과 새로 켤 라인에 나누는 검토 보고서를 만들어 저장하고 R-02 모양으로 줘요 (kind = order). "
                     + "request(500자): \"지금 A~D 4개 라인만 돌리는데 추가 주문 300개 들어왔어. 오늘 안에 끝내야 하니 한 라인 더 가동해줘\" → AI가 조건으로 해석 "
-                    + "(키가 없거나 실패하면 규칙 해석). addQty·dueAt(HH:mm)·runningLines·newLines·setupMinutes를 주면 해석보다 우선. "
-                    + "결과의 ai.order에 해석 조건과 '지금 라인만 / 새 라인까지' 비교가 있어요. 계획은 제안만 하고 바꾸지 않아요.")
+                    + "(키가 없거나 실패하면 규칙 해석, 말에 없는 라인은 버림). addQty·dueAt(HH:mm)·runningLines·newLines·setupMinutes를 주면 해석보다 우선. "
+                    + "결과의 ai.order에 해석 조건과 '지금 라인만 / 새 라인까지' 비교가 있어요. 만들기만 하고 계획은 R-06 승인·적용 때 바꿔요.")
+    @PreAuthorize("hasRole('PRODUCTION_MANAGER')") // AI 리포트 작성 = 생산관리팀장
     @PostMapping("/reassignments/orders")
     @ResponseStatus(HttpStatus.CREATED)
     public ReassignmentDetailResponse createOrderReport(@RequestBody OrderCreateRequest request) {
         return replanService.createOrder(request);
     }
 
-    @Operation(summary = "R-05 추가 주문 배정 승인·적용",
-            description = "kind = order 보고서만, 한 번만. 새 라인의 계획정지 종료 → 오늘 라인 목표 += 배정 수량 → 승인 표시 → "
+    @Operation(summary = "R-06 추가 주문 배정 승인·적용",
+            description = "공장장만. kind = order 보고서만, 한 번만. 새 라인의 계획정지 종료 → 오늘 라인 목표 += 배정 수량 → 승인 표시(R-04와 같은 칸) → "
                     + "새 라인에 MQTT sfaas/ctl/line {lineId, action: start} (재생기 --hold 라인이 받아 생산 시작 → 대시보드에 가동으로 보여요).")
+    @PreAuthorize("hasRole('PLANT_MANAGER')") // 생산 목표를 바꾸므로 공장장 (G-03과 같음)
     @PostMapping("/reassignments/{reportId}/apply")
     public ApplyResponse applyReport(@PathVariable long reportId) {
         return replanService.apply(reportId);

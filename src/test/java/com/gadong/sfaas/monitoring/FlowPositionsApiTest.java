@@ -20,6 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureMockMvc
 @Transactional
 class FlowPositionsApiTest {
+    /** 공장 안 재공·위치는 오늘 기록만 봐요 (11/20) → 테스트 데이터도 오늘 날짜로 */
+    private static final String D = java.time.LocalDate.now(com.gadong.sfaas.global.util.Kst.ZONE).toString();
+
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
@@ -34,17 +37,18 @@ class FlowPositionsApiTest {
                         + "('A-SL','슬리팅A','SLITTING','A',1,true), ('A-PR1','프레스A-1','PRESS','A',1,true), ('A-PR4','프레스A-4','PRESS','A',4,true), "
                         + "('A-WD','용접A','WELDING','A',1,true), ('PT1','도장-1','PAINTING',null,1,true), ('VI','검사-1','INSPECTION',null,1,true)",
                 "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
-                        + "('P1','A-SL','A','2026-11-19 09:00:00','2026-11-19 09:00:16'), "      // 슬리팅 뒤 → SL-PR
-                        + "('P2','A-SL','A','2026-11-19 09:00:16','2026-11-19 09:00:32'), "
-                        + "('P2','A-PR1','A','2026-11-19 09:00:32',null), "                       // PR1 처리 중 → A-PR1
-                        + "('P3','A-PR1','A','2026-11-19 09:00:00','2026-11-19 09:00:17'), "     // PR1이 끝내고 들고 있음 → A-PR1 안
-                        + "('P4','A-PR4','A','2026-11-19 09:01:00','2026-11-19 09:01:17'), "     // PR4 뒤 → PR-WD
-                        + "('P5','A-WD','A','2026-11-19 09:02:00','2026-11-19 09:02:17'), "      // 용접 뒤 → WD-PT
-                        + "('P6','PT1','A','2026-11-19 09:03:00','2026-11-19 09:03:04'), "       // 도장 뒤 → PT1:PT-VI
-                        + "('P7','VI','A','2026-11-19 09:04:00','2026-11-19 09:04:02'), "        // 출고 → 빠짐
-                        + "('P8','VI','A','2026-11-19 09:05:00',null), "                         // 검사 중 → VI
-                        + "('P9','A-PR4','A','2026-11-19 09:01:20','2026-11-19 09:01:37')",      // 공정 NG 폐기 → 빠짐
-                "insert into press_data(product_id, equipment_id, measured_at, result) values ('P9','A-PR4','2026-11-19 09:00:40','NG')");
+                        + "('P1','A-SL','A','" + D + " 09:00:00','" + D + " 09:00:16'), "      // 슬리팅 뒤 → SL-PR
+                        + "('P2','A-SL','A','" + D + " 09:00:16','" + D + " 09:00:32'), "
+                        + "('P2','A-PR1','A','" + D + " 09:00:32',null), "                       // PR1 처리 중 → A-PR1
+                        + "('P3','A-PR1','A','" + D + " 09:00:00','" + D + " 09:00:17'), "     // PR1이 끝내고 들고 있음 → A-PR1 안
+                        + "('P4','A-PR4','A','" + D + " 09:01:00','" + D + " 09:01:17'), "     // PR4 뒤 → PR-WD
+                        + "('P5','A-WD','A','" + D + " 09:02:00','" + D + " 09:02:17'), "      // 용접 뒤 → WD-PT
+                        + "('P6','PT1','A','" + D + " 09:03:00','" + D + " 09:03:04'), "       // 도장 뒤 → PT1:PT-VI
+                        + "('P7','VI','A','" + D + " 09:04:00','" + D + " 09:04:02'), "        // 출고 → 빠짐
+                        + "('P8','VI','A','" + D + " 09:05:00',null), "                         // 검사 중 → VI
+                        + "('P9','A-PR4','A','" + D + " 09:01:20','" + D + " 09:01:37'), "      // 공정 NG 폐기 → 빠짐
+                        + "('P0','A-SL','A','2026-11-18 18:59:00','2026-11-18 18:59:16')",        // 지난 날 기록 → 빠짐 (오늘만 봄)
+                "insert into press_data(product_id, equipment_id, measured_at, result) values ('P9','A-PR4','" + D + " 09:00:40','NG')");
     }
 
     @Test

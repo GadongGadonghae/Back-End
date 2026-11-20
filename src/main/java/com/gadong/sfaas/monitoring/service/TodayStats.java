@@ -44,12 +44,20 @@ public class TodayStats {
         Map<String, Long> done = new TreeMap<>();
         jdbc.query("SELECT f.equipment_id, COUNT(*)" + from + " AND f.ended_at >= :from AND f.ended_at < :to GROUP BY f.equipment_id", p,
                 rs -> { done.put(rs.getString(1), rs.getLong(2)); });
+        // 공정 판정 NG(폐기) 수: 공정 테이블 result = 'NG'. 프레스는 equipment_id = NG가 난 단(마지막으로 끝낸 단)이에요 (11/20)
+        Map<String, Long> ng = new TreeMap<>();
+        jdbc.query("SELECT x.equipment_id, COUNT(*) FROM " + t.name() + " x JOIN equipment e ON e.equipment_id = x.equipment_id"
+                + " WHERE x.result = 'NG' AND x.measured_at >= :from AND x.measured_at < :to"
+                + lineFilter(lineId, "PAINTING".equals(t.process()) ? "x.line_id" : "e.line_id") + " GROUP BY x.equipment_id", p,
+                rs -> { ng.put(rs.getString(1), rs.getLong(2)); });
         TreeMap<String, Boolean> ids = new TreeMap<>();
         started.keySet().forEach(k -> ids.put(k, true));
         done.keySet().forEach(k -> ids.put(k, true));
+        ng.keySet().forEach(k -> ids.put(k, true));
         List<CycleResponse> out = new ArrayList<>();
         for (String id : ids.keySet()) {
-            out.add(new CycleResponse(id, done.getOrDefault(id, 0L).intValue(), medianGapMs(started.getOrDefault(id, List.of()))));
+            out.add(new CycleResponse(id, done.getOrDefault(id, 0L).intValue(), medianGapMs(started.getOrDefault(id, List.of())),
+                    ng.getOrDefault(id, 0L)));
         }
         return out;
     }

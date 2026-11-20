@@ -24,6 +24,6 @@ class OpenApiTest {
                 .andExpect(jsonPath("$.paths['/api/downtime/events']").exists())
                 .andExpect(jsonPath("$.paths['/api/planned-stops/{stopId}/end']").exists())
                 .andExpect(jsonPath("$.paths['/api/alarms/thresholds/{id}']").exists())
-                .andExpect(jsonPath("$.paths['/api/reassignments/{reportId}/approve']").doesNotExist());
+                .andExpect(jsonPath("$.paths['/api/reassignments/{reportId}/approve']").exists()); // 11/20 R-04 공장장 승인
     }
 }

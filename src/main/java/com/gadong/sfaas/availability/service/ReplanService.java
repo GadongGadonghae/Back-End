@@ -215,7 +215,7 @@ public class ReplanService {
         });
     }
 
-    // ── R-04 추가 주문 배정 ──
+    // ── R-05 추가 주문 배정 ──
 
     /** 쉬던 라인을 새로 켤 때 기본 준비 시간 (분). 요청에 준비 시간이 있으면 그 값 */
     static final int DEFAULT_SETUP_MIN = 30;
@@ -372,7 +372,7 @@ public class ReplanService {
         return n != null && n > 0;
     }
 
-    // ── R-05 추가 주문 배정 승인·적용 ──
+    // ── R-06 추가 주문 배정 승인·적용 ──
 
     /**
      * 추가 주문 배정 보고서를 승인하고 실제로 적용해요 (사람이 누를 때만, 한 번만).
@@ -446,6 +446,21 @@ public class ReplanService {
         };
     }
 
+    // ── R-04 승인(결재) ──
+
+    /** 공장장이 보고서를 승인해요 (결재). 계획을 실제로 바꾸지는 않아요 */
+    @Transactional
+    public ReassignmentDetailResponse approve(long reportId) {
+        ReassignmentReport r = reportRepository.findById(reportId).orElseThrow(() ->
+                new BusinessException(ErrorCode.REASSIGNMENT_NOT_FOUND, "재배정 보고서 " + reportId + "를 찾을 수 없습니다"));
+        // 추가 주문 배정은 승인과 함께 계획을 바꾸므로 R-06 승인·적용으로만 승인해요 (승인만 하고 적용 안 된 상태를 만들지 않게)
+        if ("order".equals(r.getKind())) throw invalid("추가 주문 배정은 '승인하고 적용'(R-06)으로 승인해요");
+        User user = currentUser();
+        r.approve(user == null ? null : user.getUserId(), Kst.now());
+        reportRepository.flush();
+        return toResponse(r);
+    }
+
     // ── R-02 조회 ──
 
     public ReassignmentDetailResponse report(long reportId) {
@@ -470,8 +485,9 @@ public class ReplanService {
                 f.equipmentId(), f.code(), f.detail(), Kst.of(f.start()), Kst.of(r.getCreatedAt()), createdBy, r.getKind(),
                 Kst.of(r.getBaseAt()), remainingSec, r.getCtSec() == null ? null : r.getCtSec().doubleValue(),
                 r.getStoppedPlan(), r.getStoppedDone(), r.getTargetQty(), r.getUnmetQty(), ai(r.getAiContent()),
-                Boolean.TRUE.equals(r.getApproved()) && r.getApprovedAt() != null ? Kst.of(r.getApprovedAt()) : null,
-                r.getApprovedBy() == null ? null : userRepository.findById(r.getApprovedBy()).map(User::getUserName).orElse(null));
+                Boolean.TRUE.equals(r.getApproved()),
+                r.getApprovedBy() == null ? null : userRepository.findById(r.getApprovedBy()).map(User::getUserName).orElse(null),
+                Kst.of(r.getApprovedAt()));
     }
 
     // ── 조회 도우미 ──

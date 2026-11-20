@@ -19,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** 비가동(U-07~U-10)과 상태 타임라인(U-12)을 H2 데이터로 확인해요. */
 @SpringBootTest
-@WithMockUser(username = "testuser", roles = "MANAGER") // API는 로그인 필요 (SecurityConfig)
+@WithMockUser(username = "testuser", roles = "LINE_MANAGER") // API는 로그인 필요 (SecurityConfig)
 @AutoConfigureMockMvc
 @Transactional
 class AvailabilityApiTest {
@@ -95,6 +95,42 @@ class AvailabilityApiTest {
                 .andExpect(jsonPath("$.total").value(1));
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("lineId", "A"))
                 .andExpect(jsonPath("$.total").value(1));
+    }
+
+    @Test
+    void u08MultiStatusAndCommsLoss() throws Exception {
+        // 쉼표로 여러 상태 (11/20 전에는 'D,S'를 통째로 비교해서 0건)
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "D,S").param("minMinutes", "0"))
+                .andExpect(jsonPath("$.total").value(5));
+        // DC를 고르면 상태 이력의 통신 끊김 구간도 (A-PR1 10:00부터 진행 중) → 고장(D) 4건 + DC 1건. 최근순: 23:50 · 14:00 · 10:00(2번) · 10:00(DC) · 09:00
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "D,DC").param("minMinutes", "0"))
+                .andExpect(jsonPath("$.total").value(5))
+                .andExpect(jsonPath("$.items[3].status").value("DC"))
+                .andExpect(jsonPath("$.items[3].equipmentId").value("A-PR1"))
+                .andExpect(jsonPath("$.items[3].inProgress").value(true))
+                .andExpect(jsonPath("$.items[3].reasonCode").isEmpty())
+                .andExpect(jsonPath("$.items[3].startAt").value("2026-11-10T10:00:00+09:00"));
+        // 공장 꺼짐: 가동 설비(3대) 절반 이상이 같은 순간 DC (백엔드 켜짐·재생 끝) → 통신 고장이 아니라 알람 이력에서 빠져요
+        jdbc.update("insert into equipment_status_history(equipment_id, status, started_at, ended_at) values "
+                + "('B-PR1','DC','2026-11-10 15:00:00','2026-11-10 15:00:06'), ('PT1','DC','2026-11-10 15:00:02','2026-11-10 15:00:06')");
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("minMinutes", "0"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].equipmentId").value("A-PR1"));
+        // DC만, 라인·진행 중 조건도 같이 적용
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("lineId", "B"))
+                .andExpect(jsonPath("$.total").value(0));
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("inProgress", "true"))
+                .andExpect(jsonPath("$.total").value(1));
+        // 통신 끊김에는 사유 코드가 없어서 사유 조건을 걸면 빠져요. status를 안 보내면 지금처럼 S·I·D만 (가동률 숫자에 안 섞임)
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("reasonCode", "UP_BREAKDOWN"))
+                .andExpect(jsonPath("$.total").value(0));
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0"))
+                .andExpect(jsonPath("$.total").value(5));
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "X"))
+                .andExpect(status().isBadRequest());
+        // DC 항목(eventId 음수)은 메모 저장 불가
+        mvc.perform(patch("/api/downtime/events/-1").contentType(MediaType.APPLICATION_JSON).content("{\"memo\":\"x\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

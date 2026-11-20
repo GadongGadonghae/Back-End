@@ -2,6 +2,7 @@ package com.gadong.sfaas.report;
 
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,6 +18,7 @@ public class AiReportController {
         this.service = service;
     }
 
+    @PreAuthorize("hasRole('PRODUCTION_MANAGER')") // AI 리포트 작성 = 생산관리팀장만 (11/20)
     @PostMapping("/generate")
     @ResponseStatus(HttpStatus.CREATED)
     public AiReportResponse generate(@Valid @RequestBody AiReportRequest request) {

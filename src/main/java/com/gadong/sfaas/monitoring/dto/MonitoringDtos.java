@@ -76,7 +76,8 @@ public final class MonitoringDtos {
                                         Map<String, Object> values) {}
 
     /** M-15 설비별 사이클 수·평균 CT(ms). 행이 1개 이하면 avgCtMs는 null */
-    public record CycleResponse(String equipmentId, long cycles, Long avgCtMs) {}
+    /** ng = 그날 이 설비에서 공정 판정 NG(폐기)된 수 (11/20, 라인 흐름 설비 칸). 프레스는 NG가 난 단 */
+    public record CycleResponse(String equipmentId, long cycles, Long avgCtMs, long ng) {}
 
     /** M-16 코일 입고 현황. 1롤 = 제품 20개. 재고는 그날 끝(오늘이면 지금)까지 입고 합 − 슬리팅에 들어간 수 */
     public record CoilTodayResponse(String date,

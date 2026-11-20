@@ -114,14 +114,14 @@ public class PlanningService {
         String where = REPORT_FROM + " WHERE r.created_at >= :from AND r.created_at < :to";
         long total = jdbc.queryForObject("SELECT COUNT(*)" + where, p, Long.class);
         List<ReassignmentReportResponse> content = jdbc.query(
-                "SELECT r.report_id, r.downtime_id, e.line_id, d.equipment_id, d.started_at, d.ended_at, r.loss_qty, r.created_at, d.code, r.kind" + where
+                "SELECT r.report_id, r.downtime_id, e.line_id, d.equipment_id, d.started_at, d.ended_at, r.loss_qty, r.created_at, d.code, r.approved, r.kind" + where
                         + " ORDER BY r.created_at DESC, r.report_id DESC LIMIT :limit OFFSET :offset", Sql.paging(p, page, size),
                 (rs, n) -> new ReassignmentReportResponse(rs.getLong("report_id"), rs.getLong("downtime_id"), rs.getString("line_id"),
                         rs.getString("equipment_id"),
                         rs.getObject("started_at") == null ? 0   // 추가 주문 배정(kind = order)은 고장 건이 없어요
                                 : Kst.minutes(rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class)),
                         rs.getInt("loss_qty"), Kst.of(rs.getObject("created_at", LocalDateTime.class)), rs.getString("code"),
-                        rs.getString("kind")));
+                        rs.getBoolean("approved"), rs.getString("kind")));
         return new PageResponse<>(content, total, page, size);
     }
 

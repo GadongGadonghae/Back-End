@@ -33,6 +33,24 @@
 
 ## 공통 규칙
 
+### 계정 권한 (11/20, DB v0.3.13)
+
+`users.role` = `PLANT_MANAGER` 공장장 · `PRODUCTION_MANAGER` 생산관리팀장 · `LINE_MANAGER` 라인 담당자. 로그인 토큰에 담기고 권한이 없으면 **403 `FORBIDDEN`**.
+
+| 기능 | API | 공장장 | 생산관리팀장 | 라인 담당자 |
+|---|---|---|---|---|
+| 기록 열람 | 조회(GET) 전부 | O | O | O |
+| 알람 이력 조치 작성 | U-09 | - | O | O |
+| 생산 목표 설정 | G-03 | O | - | - |
+| 관리값 기준 설정 | M-11 | - | O | - |
+| 사용자 관리 | C-02 · C-03 | O | - | - |
+| AI 리포트 작성 | R-03 · `/ai-reports/generate` | - | O | - |
+| AI 리포트 승인(결재) | R-04 | O | - | - |
+
+C-03 `role`은 위 3가지만 받아요 (그 밖 400). 코드: `auth/Roles.java`, 프론트 `lib/permissions.ts`.
+
+
+
 - Base URL: `http://localhost:8080/api`
 - 주소에 버전을 붙이지 않음(11/17 결정)
 - 인증: Spring Security + JWT. 로그인 후 `Authorization: Bearer <token>` 헤더. (C-01 로그인 외 엔드포인트별 인증 여부는 명세에 없음)
@@ -222,6 +240,7 @@ DC 판정: 설비(Node-RED·가상 설비)가 1초마다 상태 신호(heartbeat
 | R-01 | 재배정(계획수정) 보고서 목록 | GET | `/reassignments` | 쿼리 `from, to, page, size` | `{ "items": [ { "reportId": 12, "downtimeId": 5001, "sourceLineId": "B", "equipmentId": "B-PR3", "stopMin": 42, "lossQty": 126, "createdAt": "2026-11-18T09:55:00+09:00", "code": "UP_BREAKDOWN" } ] }` (11/19 `code` 추가) | BE1 | P1 |
 | R-02 | 재배정(계획수정) 보고서 상세 | GET | `/reassignments/{reportId}` | 경로 `reportId` | `{ "reportId": 12, "downtimeId": 5001, "sourceLineId": "B", "lossQty": 126, "details": [ { "targetLineId": "D", "spareCapacity": 300, "addQty": 126, "remainingPlan": 80, "share": 50.0 } ], "equipmentId": "B-PR3", "code": "UP_BREAKDOWN", "detail": "압력 상한 초과", "startedAt": "...", "createdAt": "...", "createdBy": "김관리", "kind": "line", "baseAt": "...", "remainingSec": 43200, "ctSec": 17.0, "stoppedPlan": 100, "stoppedDone": 2, "targetQty": 600, "unmetQty": 0, "ai": { "title": "...", "summary": "...", "actions": ["..."], "risks": ["..."], "markdown": "...", "model": "mock-template", "mock": true } }` (11/19 계산 기준·AI 문장 추가. kind = line·paint·vision, 도장 보고서의 targetLineId는 PT1·PT2) | BE1 | P1 |
 | R-03 | AI 계획수정 보고서 만들기 (고장 건으로, 11/19) | POST | `/reassignments` | 본문 `{ "downtimeId": 5001, "additionalRequest": "A라인은 제외하고 납기 우선" }` (고장 D 건만, 추가 요청은 선택·500자) | 201, R-02와 같은 모양(+ `documentNo`, `ai.additionalRequest`, `ai.requestInterpretation`). **누를 때마다 새 보고서.** 오늘 고장 = 지금 기준, 지난 날 = 고장 시작 기준. 부족 = 멈춘 쪽 목표 − 기준 시각까지 출고 양품, 다른 라인(도장) 남은 능력 = 남은 시간 ÷ CT − 남은 계획 비율로 나눔. 추가 요청의 제외·정지 라인은 배정에서 빠지고 정지 라인의 남은 계획은 부족에 더해짐. AI 문장은 키가 없거나 실패하면 템플릿(`ai.mock`, `ai.fallbackReason`) | BE1 | P1 |
+| R-04 | AI 계획수정 보고서 승인·결재 (11/20) | POST | `/reassignments/{reportId}/approve` | 없음 | 200, R-02 모양 + `approved`·`approvedBy`·`approvedAt`. **공장장만** (그 밖 403). 계획을 실제로 바꾸지는 않음. R-01 목록에도 `approved` | BE1 | P1 |
 
 **R-01**
 - 손실 수량 = 정지 시간 × 라인 생산 능력(가장 느린 공정 기준, 프레스 3초 → 시간당 1,200개). 흐름: 정지 30분 이상 → 손실 수량 계산 → 여유 라인 추천 → 계획서(보고서) 작성. 실제 재배정 수행과 승인은 하지 않아요. 보고서는 Spring Boot가 자동으로 만들어요. DB에는 승인 칸(approved, approved_by, approved_at)을 만들어 두지만 비워 두고, 승인 API는 없어요.

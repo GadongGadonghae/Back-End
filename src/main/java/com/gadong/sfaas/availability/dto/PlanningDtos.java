@@ -19,9 +19,10 @@ public final class PlanningDtos {
 
     public record PlanRequest(String lineId, Integer planQty) {}
 
-    /** R-01. code는 고장 사유 코드(downtime_event.code). kind = line·paint·vision·order (order = 추가 주문 배정, 고장 건 없음 → downtimeId 0) */
+    /** R-01. code는 고장 사유 코드(downtime_event.code). approved = 공장장 승인(결재) 여부 (11/20).
+     *  kind = line·paint·vision·order (order = 추가 주문 배정, 고장 건 없음 → downtimeId 0) */
     public record ReassignmentReportResponse(long reportId, long downtimeId, String sourceLineId, String equipmentId, long stopMin,
-                                             int lossQty, OffsetDateTime createdAt, String code, String kind) {}
+                                             int lossQty, OffsetDateTime createdAt, String code, boolean approved, String kind) {}
 
     /**
      * R-02 · R-03. 앞 5칸(reportId~details)은 처음 명세 그대로, 나머지는 v0.3.10 계획수정 보고서 화면용이에요.
@@ -34,8 +35,8 @@ public final class PlanningDtos {
                                              OffsetDateTime createdAt, String createdBy, String kind, OffsetDateTime baseAt,
                                              Long remainingSec, Double ctSec, Integer stoppedPlan, Integer stoppedDone,
                                              Integer targetQty, Integer unmetQty, AiContent ai,
-                                             @Schema(description = "승인하고 적용한 시각 (R-05). 적용 전이면 null") OffsetDateTime appliedAt,
-                                             @Schema(description = "적용한 사람 이름") String appliedBy) {
+                                             @Schema(description = "공장장 승인(결재) 여부·승인자 이름·시각 (11/20, R-04)") boolean approved,
+                                             String approvedBy, OffsetDateTime approvedAt) {
         /** targetLineId는 라인 ID, 도장 보고서면 설비 ID(PT1·PT2). share = 남은 능력 비율(%) */
         public record Target(String targetLineId, int spareCapacity, int addQty, Integer remainingPlan, double share) {}
 
@@ -64,14 +65,14 @@ public final class PlanningDtos {
     }
 
     /**
-     * R-04 추가 주문 배정 검토 만들기. request = 현장 말 그대로 (AI가 조건으로 해석).
+     * R-05 추가 주문 배정 검토 만들기. request = 현장 말 그대로 (AI가 조건으로 해석).
      * 나머지 칸을 주면 해석 결과보다 우선해요 (화면에서 고친 값)
      */
     public record OrderCreateRequest(String request, Integer addQty, String dueAt, List<String> runningLines, List<String> newLines,
                                      Integer setupMinutes) {}
 
     /**
-     * R-05 추가 주문 배정 승인·적용 결과.
+     * R-06 추가 주문 배정 승인·적용 결과.
      * startedLines = 가동 명령을 보낸 새 라인, endedStops = 끝낸 계획정지 번호, targets = 바꾼 오늘 목표(전·후),
      * lineCommandSent = 라인 가동 명령(MQTT)이 브로커에 닿았는지
      */

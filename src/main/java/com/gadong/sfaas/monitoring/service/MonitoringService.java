@@ -355,9 +355,11 @@ public class MonitoringService {
     private Map<String, Map<String, Object>> lastValues() {
         Map<String, Map<String, Object>> last = new HashMap<>();
         for (ProcessData.Table t : ProcessData.TABLES) {
+            // 설비마다 (설비, 시각) 색인으로 최신 시각을 바로 찾아요. 테이블 전체를 GROUP BY 하면 기록이 쌓일수록 느려져요
+            // (11/20 10일치: 테이블 하나 87ms → 5ms)
             String sql = "SELECT equipment_id, " + String.join(", ", t.columns()) + " FROM " + t.name()
-                    + " WHERE (equipment_id, measured_at) IN (SELECT equipment_id, MAX(measured_at) FROM " + t.name()
-                    + " GROUP BY equipment_id)";
+                    + " WHERE (equipment_id, measured_at) IN (SELECT e.equipment_id, (SELECT MAX(y.measured_at) FROM " + t.name()
+                    + " y WHERE y.equipment_id = e.equipment_id) FROM equipment e)";
             for (Map<String, Object> row : jdbc.queryForList(sql, Map.of())) {
                 last.putIfAbsent((String) row.get("equipment_id"), ProcessData.values(row, t));
             }
