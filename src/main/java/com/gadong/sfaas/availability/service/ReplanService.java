@@ -1,0 +1,305 @@
+package com.gadong.sfaas.availability.service;
+
+import static com.gadong.sfaas.global.util.Checks.invalid;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gadong.sfaas.auth.entity.User;
+import com.gadong.sfaas.auth.repository.UserRepository;
+import com.gadong.sfaas.availability.dto.PlanningDtos.ReassignmentDetailResponse;
+import com.gadong.sfaas.availability.dto.PlanningDtos.ReassignmentDetailResponse.AiContent;
+import com.gadong.sfaas.availability.dto.PlanningDtos.ReassignmentDetailResponse.Target;
+import com.gadong.sfaas.availability.entity.ReassignmentDetail;
+import com.gadong.sfaas.availability.entity.ReassignmentReport;
+import com.gadong.sfaas.availability.repository.ReassignmentDetailRepository;
+import com.gadong.sfaas.availability.repository.ReassignmentReportRepository;
+import com.gadong.sfaas.global.exception.BusinessException;
+import com.gadong.sfaas.global.exception.ErrorCode;
+import com.gadong.sfaas.global.util.Kst;
+import com.gadong.sfaas.report.AiReportRequest;
+import com.gadong.sfaas.report.AiReportResponse;
+import com.gadong.sfaas.report.AiReportService;
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * 계획수정(재배정) 보고서 (R-02 조회 · R-03 만들기). 프론트 FN-009 계산 규칙 그대로예요.
+ * <ul>
+ *   <li>기준 시각: 오늘 고장이면 만드는 지금, 지난 날 고장이면 고장 시작 시각. 남은 시간 = 기준 시각 ~ 그날 24:00</li>
+ *   <li>실적 = 기준 시각까지 출고 양품 수 (inspection_result OK, G-01과 같음)</li>
+ *   <li>line: 라인 안 설비는 직렬이라 라인 전체가 멈춘 것으로 봐요. 부족 = 그 라인 목표 − 실적.
+ *       다른 라인(지금 고장 설비가 없는 라인)의 남은 능력 = 남은 시간 ÷ 라인 CT − 남은 계획</li>
+ *   <li>paint: 도장 1대 고장 → 다른 도장 1대가 맡아요. 도장 계획 = 그 도장을 쓰는 라인(current_paint_id) 목표 합</li>
+ *   <li>vision: 비전 검사기는 1대뿐이라 대신할 설비가 없어요. 부족 = 공장 목표 − 실적, 전부 미달</li>
+ *   <li>나누기: 부족 수량을 남은 능력 비율대로 (내림 후 나머지는 소수점 큰 쪽부터). 계산과 문장은 AiReportService가 해요</li>
+ * </ul>
+ * 계획만 제안하고 목표·설비 계획은 바꾸지 않아요.
+ */
+@Service
+@Transactional(readOnly = true)
+public class ReplanService {
+
+    /** 재배정 후보 라인 상태. AiReportService는 이 상태만 후보로 써요 (지금 고장(D)인 라인은 미리 뺌) */
+    private static final String CANDIDATE = "R";
+    private static final DateTimeFormatter DOC_DATE = DateTimeFormatter.ofPattern("yyyyMMdd");
+
+    private final NamedParameterJdbcTemplate jdbc;
+    private final ReassignmentReportRepository reportRepository;
+    private final ReassignmentDetailRepository detailRepository;
+    private final UserRepository userRepository;
+    private final AiReportService aiReportService;
+    private final ObjectMapper objectMapper;
+
+    public ReplanService(NamedParameterJdbcTemplate jdbc, ReassignmentReportRepository reportRepository,
+                         ReassignmentDetailRepository detailRepository, UserRepository userRepository,
+                         AiReportService aiReportService, ObjectMapper objectMapper) {
+        this.jdbc = jdbc;
+        this.reportRepository = reportRepository;
+        this.detailRepository = detailRepository;
+        this.userRepository = userRepository;
+        this.aiReportService = aiReportService;
+        this.objectMapper = objectMapper;
+    }
+
+    /** 고장 건 정보 */
+    private record Fault(long downtimeId, String equipmentId, String equipmentName, String process, String lineId, String status,
+                         String code, String codeName, String detail, LocalDateTime start) {}
+
+    /** 계산 결과 한 줄: 대상(라인 또는 도장 설비), 남은 계획, 남은 능력 */
+    private record Row(String target, int remainingPlan, int capacity) {}
+
+    // ── R-03 만들기 ──
+
+    /**
+     * 고장(D) 건으로 AI 계획수정 보고서를 만들어 저장해요. 누를 때마다 새 보고서예요 (추가 요청을 바꿔 다시 만들 수 있게).
+     * additionalRequest: "A라인은 제외", "F라인 정지", "납기 우선" 같은 요청. 제외·정지 라인은 배정에서 빠지고, 정지 라인의 남은 계획은 부족 수량에 더해져요
+     */
+    @Transactional
+    public ReassignmentDetailResponse create(Long downtimeId, String additionalRequest) {
+        if (downtimeId == null) throw invalid("downtimeId가 필요합니다");
+        String request = additionalRequest == null || additionalRequest.isBlank() ? null : additionalRequest.trim();
+        if (request != null && request.length() > 500) throw invalid("추가 요청은 500자까지 쓸 수 있습니다");
+
+        Fault f = fault(downtimeId);
+        if (!"D".equals(f.status())) throw invalid("계획수정 보고서는 고장(D) 건만 만듭니다");
+
+        LocalDateTime now = Kst.now();
+        LocalDate day = f.start().toLocalDate();
+        LocalDateTime base = day.equals(now.toLocalDate()) ? now : f.start();
+        LocalDateTime midnight = day.plusDays(1).atStartOfDay();
+        long remainingSec = Math.max(0, Duration.between(base, midnight).getSeconds());
+        Map<String, Integer> targets = targets(day);
+        Integer plantTarget = targets.isEmpty() ? null : targets.values().stream().mapToInt(Integer::intValue).sum();
+
+        String kind;
+        BigDecimal ct;
+        int stoppedPlan, stoppedDone;
+        List<Row> rows = new ArrayList<>();
+        String stoppedKey; // AiReportService에서 빼는 멈춘 쪽 (라인 ID 또는 설비 ID)
+        if ("INSPECTION".equals(f.process())) {
+            kind = "vision";
+            ct = cycleTime("'INSPECTION'");
+            stoppedPlan = plantTarget == null ? 0 : plantTarget;
+            stoppedDone = done(day, base, null, null);
+            stoppedKey = f.equipmentId();
+        } else if ("PAINTING".equals(f.process())) {
+            kind = "paint";
+            ct = cycleTime("'PAINTING'");
+            Map<String, Integer> paintPlan = paintPlans(targets);
+            stoppedPlan = paintPlan.getOrDefault(f.equipmentId(), 0);
+            stoppedDone = done(day, base, null, f.equipmentId());
+            stoppedKey = f.equipmentId();
+            boolean today = base.equals(now);
+            for (String pt : jdbc.queryForList("SELECT equipment_id FROM equipment WHERE process_id = 'PAINTING' AND is_active = TRUE"
+                    + " AND equipment_id <> :eq ORDER BY equipment_id", Map.of("eq", f.equipmentId()), String.class)) {
+                if (today && downNow(pt, null)) continue;
+                int remainingPlan = Math.max(0, paintPlan.getOrDefault(pt, 0) - done(day, base, null, pt));
+                rows.add(new Row(pt, remainingPlan, capacity(remainingSec, ct, remainingPlan)));
+            }
+        } else {
+            kind = "line";
+            ct = cycleTime("'SLITTING', 'PRESS', 'WELDING'");
+            stoppedPlan = targets.getOrDefault(f.lineId(), 0);
+            stoppedDone = done(day, base, f.lineId(), null);
+            stoppedKey = f.lineId();
+            boolean today = base.equals(now);
+            for (String line : jdbc.queryForList("SELECT line_id FROM line WHERE line_id <> :line ORDER BY line_id",
+                    Map.of("line", f.lineId()), String.class)) {
+                if (today && downNow(null, line)) continue;
+                int remainingPlan = Math.max(0, targets.getOrDefault(line, 0) - done(day, base, line, null));
+                rows.add(new Row(line, remainingPlan, capacity(remainingSec, ct, remainingPlan)));
+            }
+        }
+
+        // 부족 수량·나누기·문장은 AiReportService (팀원 report 패키지). 목표 = 멈춘 쪽 계획, 완료 = 기준 시각까지 실적
+        // operatorNote로 계산 규칙을 LLM에 알려 줘요 (문장이 계산과 어긋나지 않게)
+        AiReportResponse ai = aiReportService.generate(new AiReportRequest(
+                f.downtimeId(), stoppedKey, f.equipmentId(), f.equipmentName(),
+                f.codeName() + (f.detail() == null || f.detail().isBlank() ? "" : " (" + f.detail() + ")"),
+                Kst.of(f.start()), stoppedPlan, stoppedDone, 0, "24:00",
+                rows.stream().map(r -> new AiReportRequest.LineCondition(r.target(), CANDIDATE, r.capacity(), r.remainingPlan(), null)).toList(),
+                note(kind, f, base, remainingSec, ct), request));
+        // 템플릿 문장은 lineId 뒤에 "라인"을 붙여서, 도장·비전 보고서는 제목을 설비 이름으로 바꿔요
+        String title = ai.title(), markdown = ai.markdown();
+        if (ai.mock() && !"line".equals(kind)) {
+            title = f.equipmentName() + " 생산계획 수정 제안";
+            if (markdown != null) markdown = markdown.replace(ai.title(), title);
+        }
+        int shortage = ai.calculatedShortage();
+        Map<String, Integer> add = new HashMap<>();
+        ai.allocations().forEach(a -> add.put(a.lineId(), a.quantity()));
+        int assigned = add.values().stream().mapToInt(Integer::intValue).sum();
+
+        User user = currentUser();
+        ReassignmentReport saved = reportRepository.save(new ReassignmentReport(f.downtimeId(), shortage, now,
+                user == null ? null : user.getUserId(), kind, base, ct, stoppedPlan, stoppedDone, plantTarget,
+                Math.max(0, shortage - assigned), json(new AiContent(title, ai.summary(), ai.actions(), ai.risks(), markdown,
+                        ai.model(), ai.mock(), ai.fallbackReason(), request, ai.requestInterpretation()))));
+        for (Row r : rows) {
+            detailRepository.save(new ReassignmentDetail(saved.getReportId(), r.target(), r.capacity(), add.getOrDefault(r.target(), 0),
+                    r.remainingPlan()));
+        }
+        detailRepository.flush();
+        return toResponse(saved);
+    }
+
+    /** LLM에 주는 계산 규칙 설명 (보고서 문장의 근거) */
+    private static String note(String kind, Fault f, LocalDateTime base, long remainingSec, BigDecimal ct) {
+        String common = " 기준 시각 " + base.toLocalTime() + ", 자정까지 남은 시간 " + remainingSec / 60 + "분, CT " + ct.stripTrailingZeros().toPlainString()
+                + "초. 실적은 기준 시각까지 출고 양품 수. lineConditions의 availableCapacity = 남은 시간 ÷ CT − 남은 계획(currentPlan). "
+                + "수량은 allocation 값을 그대로 쓰고, 계획은 제안만 하며 자동으로 바꾸지 않음.";
+        return switch (kind) {
+            case "paint" -> f.equipmentName() + "(" + f.equipmentId() + ") 고장. 도장은 공용 설비라 라인 정지가 아니라, 같은 공정의 다른 도장 설비("
+                    + "lineConditions의 lineId가 설비 ID)가 이 도장을 쓰는 라인들의 남은 계획을 맡는 안." + common;
+            case "vision" -> f.equipmentName() + " 고장. 비전 검사기는 1대뿐이라 대신할 설비가 없어 부족 수량 전부가 목표 미달 예상. "
+                    + "복구 시간 단축과 복구 후 검사 대기 물량 처리가 핵심." + common;
+            default -> f.equipmentName() + " 고장. 라인 안 설비는 한 줄로 이어져 있어 " + f.lineId() + "라인 전체가 멈춘 것으로 보고, "
+                    + "지금 고장 설비가 없는 다른 라인에 남은 능력 비율대로 나눔." + common;
+        };
+    }
+
+    // ── R-02 조회 ──
+
+    public ReassignmentDetailResponse report(long reportId) {
+        return toResponse(reportRepository.findById(reportId).orElseThrow(() ->
+                new BusinessException(ErrorCode.REASSIGNMENT_NOT_FOUND, "재배정 보고서 " + reportId + "를 찾을 수 없습니다")));
+    }
+
+    private ReassignmentDetailResponse toResponse(ReassignmentReport r) {
+        Fault f = fault(r.getDowntimeId());
+        List<ReassignmentDetail> rows = detailRepository.findByReportIdOrderByLineIdAsc(r.getReportId());
+        int capSum = rows.stream().mapToInt(ReassignmentDetail::getSpareCapacity).sum();
+        List<Target> details = rows.stream().map(d -> new Target(d.getLineId(), d.getSpareCapacity(), d.getAddedQty(), d.getRemainingPlan(),
+                capSum == 0 ? 0 : Math.round(d.getSpareCapacity() * 1000.0 / capSum) / 10.0)).toList();
+        Long remainingSec = r.getBaseAt() == null ? null
+                : Math.max(0, Duration.between(r.getBaseAt(), r.getBaseAt().toLocalDate().plusDays(1).atStartOfDay()).getSeconds());
+        String createdBy = r.getCreatedBy() == null ? null
+                : userRepository.findById(r.getCreatedBy()).map(User::getUserName).orElse(null);
+        String documentNo = "AI-RPT-" + r.getCreatedAt().format(DOC_DATE) + "-" + String.format("%03d", r.getReportId());
+        return new ReassignmentDetailResponse(r.getReportId(), r.getDowntimeId(), f.lineId(), r.getLossQty(), details, documentNo,
+                f.equipmentId(), f.code(), f.detail(), Kst.of(f.start()), Kst.of(r.getCreatedAt()), createdBy, r.getKind(),
+                Kst.of(r.getBaseAt()), remainingSec, r.getCtSec() == null ? null : r.getCtSec().doubleValue(),
+                r.getStoppedPlan(), r.getStoppedDone(), r.getTargetQty(), r.getUnmetQty(), ai(r.getAiContent()));
+    }
+
+    // ── 조회 도우미 ──
+
+    private Fault fault(long downtimeId) {
+        List<Fault> found = jdbc.query("SELECT d.downtime_id, d.equipment_id, e.equipment_name, e.process_id, e.line_id, d.status, d.code,"
+                        + " c.code_name, d.detail, d.started_at"
+                        + " FROM downtime_event d JOIN equipment e ON e.equipment_id = d.equipment_id"
+                        + " LEFT JOIN downtime_code c ON c.code = d.code WHERE d.downtime_id = :id", Map.of("id", downtimeId),
+                (rs, n) -> new Fault(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5), rs.getString(6),
+                        rs.getString(7), rs.getString(8) == null ? rs.getString(7) : rs.getString(8), rs.getString(9),
+                        Kst.local(rs.getObject(10))));
+        if (found.isEmpty()) throw new BusinessException(ErrorCode.DOWNTIME_NOT_FOUND, "비가동 이력 " + downtimeId + "를 찾을 수 없습니다");
+        return found.get(0);
+    }
+
+    /** 그날 라인별 목표 (production_target). 없는 라인은 빠져요 */
+    private Map<String, Integer> targets(LocalDate day) {
+        Map<String, Integer> m = new HashMap<>();
+        jdbc.query("SELECT line_id, target_qty FROM production_target WHERE target_date = :day", Map.of("day", day),
+                rs -> { m.put(rs.getString(1), rs.getInt(2)); });
+        return m;
+    }
+
+    /** 도장 설비별 계획 = 그 도장을 쓰는 라인(line.current_paint_id) 목표 합 */
+    private Map<String, Integer> paintPlans(Map<String, Integer> targets) {
+        Map<String, Integer> m = new HashMap<>();
+        jdbc.query("SELECT line_id, current_paint_id FROM line", Map.of(), rs -> {
+            String pt = rs.getString(2);
+            if (pt != null) m.merge(pt, targets.getOrDefault(rs.getString(1), 0), Integer::sum);
+        });
+        return m;
+    }
+
+    /** 그날 0시 ~ 기준 시각 출고 양품 수. lineId·paintId를 주면 그 라인·그 도장만 */
+    private int done(LocalDate day, LocalDateTime base, String lineId, String paintId) {
+        Map<String, Object> p = new HashMap<>();
+        p.put("from", day.atStartOfDay());
+        p.put("base", base);
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM inspection_result WHERE result = 'OK'"
+                + " AND inspected_at >= :from AND inspected_at < :base");
+        if (lineId != null) { sql.append(" AND line_id = :line"); p.put("line", lineId); }
+        if (paintId != null) { sql.append(" AND paint_equipment_id = :pt"); p.put("pt", paintId); }
+        Long n = jdbc.queryForObject(sql.toString(), p, Long.class);
+        return n == null ? 0 : n.intValue();
+    }
+
+    /** 지금 고장(D) 중인 설비가 있는지. equipmentId 또는 lineId 중 하나 */
+    private boolean downNow(String equipmentId, String lineId) {
+        String where = equipmentId != null ? "d.equipment_id = :key" : "e.line_id = :key";
+        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM downtime_event d JOIN equipment e ON e.equipment_id = d.equipment_id"
+                + " WHERE d.status = 'D' AND d.ended_at IS NULL AND " + where, Map.of("key", equipmentId != null ? equipmentId : lineId), Long.class);
+        return n != null && n > 0;
+    }
+
+    /** 공정 표준 CT 중 가장 긴 값 = 라인 박자 (초). 공정 정보가 없으면 1초로 봐요 */
+    private BigDecimal cycleTime(String processIds) {
+        BigDecimal ct = jdbc.queryForObject("SELECT MAX(cycle_time_sec) FROM process WHERE process_id IN (" + processIds + ")",
+                Map.of(), BigDecimal.class);
+        return ct == null || ct.signum() <= 0 ? BigDecimal.ONE : ct;
+    }
+
+    /** 남은 능력 = 남은 시간 ÷ CT − 남은 계획 (0 아래면 0) */
+    private static int capacity(long remainingSec, BigDecimal ct, int remainingPlan) {
+        return Math.max(0, (int) Math.floor(remainingSec / ct.doubleValue()) - remainingPlan);
+    }
+
+    /** 로그인 사용자 (JWT의 loginId). 없으면 null */
+    private User currentUser() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null) return null;
+        return userRepository.findByLoginId(auth.getName()).orElse(null);
+    }
+
+    private String json(AiContent ai) {
+        try {
+            return objectMapper.writeValueAsString(ai);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("AI 보고서 문장을 저장하지 못했습니다", e);
+        }
+    }
+
+    private AiContent ai(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readValue(json, AiContent.class);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
+    }
+}

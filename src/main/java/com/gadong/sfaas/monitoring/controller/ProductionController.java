@@ -1,0 +1,106 @@
+package com.gadong.sfaas.monitoring.controller;
+
+import com.gadong.sfaas.global.response.PageResponse;
+import com.gadong.sfaas.monitoring.dto.MonitoringDtos.*;
+import com.gadong.sfaas.monitoring.service.CoilStats;
+import com.gadong.sfaas.monitoring.service.FlowStats;
+import com.gadong.sfaas.monitoring.service.MonitoringService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import java.time.LocalDate;
+import java.util.List;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@Tag(name = "모니터링 · 생산·검사")
+@RestController
+@RequestMapping("/api")
+public class ProductionController {
+
+    private final MonitoringService service;
+    private final CoilStats coilStats;
+    private final FlowStats flowStats;
+
+    public ProductionController(MonitoringService service, CoilStats coilStats, FlowStats flowStats) {
+        this.service = service;
+        this.coilStats = coilStats;
+        this.flowStats = flowStats;
+    }
+
+    @Operation(summary = "M-07 출고 양품/불량 카운트",
+            description = "P1. total = inspected + processNg, ok = inspected − ngVision, yieldRate = ok ÷ total. "
+                    + "byProcess 는 lineId 를 지정했을 때만 채워요. groupBy=paint 는 도장 앞에서 폐기된 불량이 빠져요.")
+    @GetMapping("/production/counts")
+    public ProductionCountsResponse counts(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+                                           @RequestParam(required = false) String lineId,
+                                           @RequestParam(defaultValue = "line") String groupBy) {
+        return service.counts(date, lineId, groupBy);
+    }
+
+    @Operation(summary = "M-08 비전 검사 결과 목록", description = "P1. result 는 OK/NG")
+    @GetMapping("/inspections")
+    public PageResponse<InspectionResponse> inspections(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                                        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+                                                        @RequestParam(required = false) String lineId,
+                                                        @RequestParam(required = false) String paintId,
+                                                        @RequestParam(required = false) String result,
+                                                        @RequestParam(defaultValue = "1") int page,
+                                                        @RequestParam(defaultValue = "50") int size) {
+        return service.inspections(from, to, lineId, paintId, result, page, size);
+    }
+
+    @Operation(summary = "M-09 도장 경로 전환", description = "P1. line.current_paint_id 변경 + paint_route_history 기록. Q-03 MQTT 명령은 연동 전이에요")
+    @PutMapping("/lines/{lineId}/paint-route")
+    public PaintRouteResponse changePaintRoute(@PathVariable String lineId, @RequestBody PaintRouteRequest request) {
+        return service.changePaintRoute(lineId, request);
+    }
+
+    @Operation(summary = "M-13 공정별 재공품(WIP) 수량",
+            description = "P1. 앞 공정 설비에서 나왔는데 다음 공정 설비에 아직 안 들어간 제품 수(product_flow, 공정 NG 제외, 처리 중은 재공 아님). "
+                    + "코일입고는 coil_receipt.product_qty 합 − 슬리팅에 들어간 수이고 lineId 를 주면 빠져요.")
+    @GetMapping("/production/wip")
+    public List<WipResponse> wip(@RequestParam(required = false) String lineId,
+                                 @Parameter(description = "도장 설비(PT1·PT2). 주면 그 도장의 앞(용접→도장)·뒤(도장→검사) 재공만 줘요")
+                                 @RequestParam(required = false) String paintId) {
+        return service.wip(lineId, paintId);
+    }
+
+    @Operation(summary = "M-16 코일 입고 현황",
+            description = "그날 입고 롤 수·제품 수, 슬리팅 앞 코일 재고(제품 수·롤), 슬리팅 투입 수, 입고 목록. date 생략 시 오늘. "
+                    + "1롤 = 제품 20개. 재고는 그날 끝(오늘이면 지금)까지 누적이라 전날 남은 코일도 들어가요")
+    @GetMapping("/coil/today")
+    public CoilTodayResponse coilToday(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return coilStats.today(date);
+    }
+
+    @Operation(summary = "M-17 공장 안 제품 위치 (3D 물류)",
+            description = "입고 뒤·출고 전 제품마다 지금 위치(product_flow 마지막 기록). 설비 안에서 처리 중이면 equipmentId, "
+                    + "공정 사이에서 기다리면 pile(SL-PR·PR-WD·WD-PT·PT1:PT-VI·PT2:PT-VI). 프레스 1~3단이 끝내고 들고 있는 제품은 그 프레스 안(equipmentId). 공정 불량(폐기)·출고 제품은 빼요. "
+                    + "프론트가 1초마다 불러요 (나중에 웹소켓 /topic/flow로 바꿔도 모양은 같음)")
+    @GetMapping("/production/flow/positions")
+    public FlowPositionsResponse flowPositions() {
+        return flowStats.flowPositions();
+    }
+
+    @Operation(summary = "E-01 설비 데이터 조회 (공정별 테이블의 사이클 단위 행)",
+            description = "P2. values 키는 DB 컬럼명의 camelCase예요. 최신순")
+    @GetMapping("/equipment-data")
+    public PageResponse<EquipmentDataResponse> equipmentData(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String lineId,
+            @RequestParam(required = false) String process,
+            @RequestParam(required = false) String equipmentId,
+            @RequestParam(required = false) String result,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        return service.equipmentData(from, to, lineId, process, equipmentId, result, page, size);
+    }
+}
