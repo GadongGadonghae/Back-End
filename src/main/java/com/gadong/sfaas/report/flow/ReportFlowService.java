@@ -117,7 +117,12 @@ public class ReportFlowService {
         Report r = find(reportId);
         if (!Report.WRITTEN.equals(r.getStatus())) throw conflict(r, "작성 상태인 보고서만 결재할 수 있습니다");
         String content = null;
-        if (r.getReplanReportId() != null) content = json(replanService.approve(r.getReplanReportId()));   // 승인하면 계획·도장 경로에 적용
+        if (r.getReplanReportId() != null) {
+            // 추가 주문 배정(order)은 승인·적용(R-06: 계획정지 끝내기 + 목표 + 라인 가동 명령), 나머지는 승인하면 계획·도장 경로에 적용 (R-04)
+            if (r.getTargetKey().startsWith("ORDER-")) replanService.apply(r.getReplanReportId());
+            else replanService.approve(r.getReplanReportId());
+            content = json(replanService.report(r.getReplanReportId()));
+        }
         r.approve(currentUser.id(), Kst.now(), content);
         return toResponse(r, true);
     }

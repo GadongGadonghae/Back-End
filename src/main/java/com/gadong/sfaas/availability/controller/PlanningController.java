@@ -135,7 +135,9 @@ public class PlanningController {
     @PreAuthorize("hasRole('PLANT_HEAD')") // 생산 목표를 바꾸므로 공장장 (G-03과 같음)
     @PostMapping("/reassignments/{reportId}/apply")
     public ApplyResponse applyReport(@PathVariable long reportId) {
-        return replanService.apply(reportId);
+        ApplyResponse applied = replanService.apply(reportId);
+        reportFlow.syncApproved(replanService.report(reportId));   // 결재 흐름도 결재 완료로 → 보고서 전송 가능
+        return applied;
     }
 
     @Operation(summary = "S-01 계획정지 조회 (진행 중 + 이력)",

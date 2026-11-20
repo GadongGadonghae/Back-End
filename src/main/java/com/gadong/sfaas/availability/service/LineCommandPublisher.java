@@ -31,7 +31,19 @@ public class LineCommandPublisher {
 
     /** action = start(가동) · hold(멈춤). 보냈으면 true */
     public boolean send(String lineId, String action) {
-        String body = "{\"lineId\":\"" + lineId + "\",\"action\":\"" + action + "\",\"ts\":\"" + Kst.of(Kst.now()) + "\"}";
+        return publish(topic, "{\"lineId\":\"" + lineId + "\",\"action\":\"" + action + "\",\"ts\":\"" + Kst.of(Kst.now()) + "\"}");
+    }
+
+    /**
+     * 도장 경로 전환 명령 (MQTT {ctl}/route, 11/20). AI 보고서 결재로 경로를 바꾸면 보내요.
+     * 재생기(player.py route_hold)가 받아서 붙잡아 둔 새 도장 값을 보내기 시작해요. 실설비라면 이송 설비가 받는 자리예요
+     */
+    public boolean route(String lineId, String paintId) {
+        return publish(topic.replaceAll("/line$", "/route"),
+                "{\"lineId\":\"" + lineId + "\",\"paintId\":\"" + paintId + "\",\"ts\":\"" + Kst.of(Kst.now()) + "\"}");
+    }
+
+    private boolean publish(String topic, String body) {
         MqttClient client = null;
         try {
             client = new MqttClient(brokerUrl, "sfaas-be-line-" + System.nanoTime(), new MemoryPersistence());

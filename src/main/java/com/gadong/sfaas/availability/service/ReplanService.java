@@ -552,6 +552,7 @@ public class ReplanService {
                     Map.of("pt", f.equipmentId()), String.class)) {
                 monitoringService.changePaintRoute(line, new com.gadong.sfaas.monitoring.dto.MonitoringDtos.PaintRouteRequest(
                         to, "AI 보고서 승인 " + documentNo(r) + " (" + f.equipmentName() + " 고장)"));
+                lineCommands.route(line, to);   // 현장(재생기)에 경로 전환 명령 → 새 도장에서 칠하기 시작 (11/20)
             }
             return;
         }
