@@ -13,7 +13,8 @@ public final class PlanningDtos {
     public record ProductionSummaryResponse(String period, String lineId, int planQty, int actualQty, double achievementRate) {}
 
     /** G-02 · G-03 */
-    public record PlanResponse(String date, String lineId, int planQty) {}
+    /** updatedAt·updatedBy = 마지막으로 저장한 시각·사람 이름 (11/20 추가) */
+    public record PlanResponse(String date, String lineId, int planQty, OffsetDateTime updatedAt, String updatedBy) {}
 
     public record PlanRequest(String lineId, Integer planQty) {}
 

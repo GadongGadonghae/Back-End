@@ -19,10 +19,11 @@ public class Threshold {
     @Column(name = "updated_at") private LocalDateTime updatedAt;
     @Column(name = "updated_by") private Integer updatedBy;
 
-    /** M-11. 수정한 사람(updated_by)은 JWT 연동 후 채워요 */
-    public void update(BigDecimal lowerLimit, BigDecimal upperLimit, LocalDateTime at) {
+    /** M-11. by = 수정한 로그인 사용자 번호 (없으면 null) */
+    public void update(BigDecimal lowerLimit, BigDecimal upperLimit, LocalDateTime at, Integer by) {
         this.lowerLimit = lowerLimit;
         this.upperLimit = upperLimit;
         this.updatedAt = at;
+        this.updatedBy = by;
     }
 }

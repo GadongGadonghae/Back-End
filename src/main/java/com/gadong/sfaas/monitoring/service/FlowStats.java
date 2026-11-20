@@ -63,18 +63,19 @@ public class FlowStats {
     /**
      * M-17: 공장 안 제품 위치. 설비 안(처리 중)이면 equipmentId, 공정 사이에서 기다리면 pile.
      * pile = SL-PR · PR-WD · WD-PT (라인 안, 앞에 라인을 붙이지 않음) · PT1:PT-VI · PT2:PT-VI (도장 뒤).
-     * 프레스 단 사이(PR1~PR3 뒤)는 재공으로 세지 않아서 빼요 (프론트 요청, M-13과 같음)
+     * 프레스 1~3단 뒤는 재공이 아니라 그 단이 끝낸 제품을 들고 다음 단을 기다리는 것이라 그 프레스 안(equipmentId)으로 줘요 (11/20)
      */
     public FlowPositionsResponse flowPositions() {
         List<ProductPosition> out = new ArrayList<>();
         for (Position p : positions()) {
-            if (!p.ended()) {
+            boolean heldInPress = "PRESS".equals(p.process()) && p.seq() < ProcessData.PRESS_STAGES.size();
+            if (!p.ended() || heldInPress) {
                 out.add(new ProductPosition(p.productId(), p.lineId(), p.equipmentId(), null));
                 continue;
             }
             String pile = switch (p.process()) {
                 case "SLITTING" -> "SL-PR";
-                case "PRESS" -> p.seq() >= ProcessData.PRESS_STAGES.size() ? "PR-WD" : null; // PR4 뒤만
+                case "PRESS" -> "PR-WD"; // PR4 뒤 (1~3단은 위에서 그 프레스 안으로)
                 case "WELDING" -> "WD-PT";
                 case "PAINTING" -> p.equipmentId() + ":PT-VI";
                 default -> null;

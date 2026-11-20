@@ -17,16 +17,19 @@ public class ProductionTarget {
     @Column(name = "created_by") private Integer createdBy;
     @Column(name = "created_at") private LocalDateTime createdAt;
 
-    /** G-03. 등록한 사람(created_by)은 JWT 연동 후 채워요 */
-    public ProductionTarget(LocalDate targetDate, String lineId, int targetQty, LocalDateTime createdAt) {
+    /** G-03. createdBy·createdAt = 마지막으로 저장한 사람·시각 (11/20: 바꿀 때도 갱신) */
+    public ProductionTarget(LocalDate targetDate, String lineId, int targetQty, LocalDateTime createdAt, Integer createdBy) {
         this.targetDate = targetDate;
         this.lineId = lineId;
         this.targetQty = targetQty;
         this.createdAt = createdAt;
+        this.createdBy = createdBy;
     }
 
-    public void changeQty(int targetQty) {
+    public void change(int targetQty, LocalDateTime at, Integer by) {
         this.targetQty = targetQty;
+        this.createdAt = at;
+        this.createdBy = by;
     }
 
     @EqualsAndHashCode @NoArgsConstructor @AllArgsConstructor

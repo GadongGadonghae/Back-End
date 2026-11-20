@@ -2,6 +2,7 @@ package com.gadong.sfaas.availability.service;
 
 import static com.gadong.sfaas.global.util.Checks.invalid;
 
+import com.gadong.sfaas.auth.service.CurrentUser;
 import com.gadong.sfaas.availability.dto.PlanningDtos.*;
 import com.gadong.sfaas.availability.entity.ProductionTarget;
 import com.gadong.sfaas.availability.repository.ProductionTargetRepository;
@@ -45,14 +46,16 @@ public class PlanningService {
     private final DowntimeCodeRepository downtimeCodeRepository;
     private final ProductionStats productionStats;
     private final ProductionTargetRepository targetRepository;
+    private final CurrentUser currentUser;
 
     public PlanningService(NamedParameterJdbcTemplate jdbc, MasterService masterService, DowntimeCodeRepository downtimeCodeRepository, ProductionStats productionStats,
-                           ProductionTargetRepository targetRepository) {
+                           ProductionTargetRepository targetRepository, CurrentUser currentUser) {
         this.jdbc = jdbc;
         this.masterService = masterService;
         this.downtimeCodeRepository = downtimeCodeRepository;
         this.productionStats = productionStats;
         this.targetRepository = targetRepository;
+        this.currentUser = currentUser;
     }
 
     /** G-01. 실적 = 출고 양품 수(검사 OK, 대시보드 M-07 ok와 같음, 11/18 변경. 예전엔 검사 수 + 공정 불량 수). 계획이나 실적이 있는 (구간, 라인)마다 한 줄이에요 */
@@ -83,7 +86,7 @@ public class PlanningService {
         List<ProductionTarget> targets = lineId == null
                 ? targetRepository.findByTargetDateBetweenOrderByTargetDateAscLineIdAsc(from, to)
                 : targetRepository.findByTargetDateBetweenAndLineIdOrderByTargetDateAsc(from, to, lineId);
-        return targets.stream().map(PlanningService::plan).toList();
+        return targets.stream().map(this::plan).toList();
     }
 
     /** G-03: 같은 날짜·라인 목표가 있으면 수량만 바꾸고, 없으면 새로 만들어요 */
@@ -94,11 +97,11 @@ public class PlanningService {
         }
         masterService.requireLine(request.lineId());
         ProductionTarget target = targetRepository.findById(new ProductionTarget.Key(date, request.lineId())).orElse(null);
+        Integer by = currentUser.id();
         if (target == null) {
-            // TODO(BE2 연동): 등록한 사람(created_by)은 JWT 로그인 사용자로 채워요
-            target = targetRepository.save(new ProductionTarget(date, request.lineId(), request.planQty(), Kst.now()));
+            target = targetRepository.save(new ProductionTarget(date, request.lineId(), request.planQty(), Kst.now(), by));
         } else {
-            target.changeQty(request.planQty());
+            target.change(request.planQty(), Kst.now(), by);
         }
         return plan(target);
     }
@@ -188,7 +191,7 @@ public class PlanningService {
         return Periods.label(Periods.start(day, unit), unit) + "|" + lineId;
     }
 
-    private static PlanResponse plan(ProductionTarget t) {
-        return new PlanResponse(t.getTargetDate().toString(), t.getLineId(), t.getTargetQty());
+    private PlanResponse plan(ProductionTarget t) {
+        return new PlanResponse(t.getTargetDate().toString(), t.getLineId(), t.getTargetQty(), Kst.of(t.getCreatedAt()), currentUser.nameOf(t.getCreatedBy()));
     }
 }

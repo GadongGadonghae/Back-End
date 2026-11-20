@@ -44,7 +44,9 @@ public final class MonitoringDtos {
     public record AckResponse(long alarmId, Integer ackUserId, OffsetDateTime ackedAt) {}
 
     /** M-10 */
-    public record ThresholdResponse(int id, String equipmentId, String process, String metric, Double low, Double high) {}
+    /** updatedAt·updatedBy = 마지막으로 바꾼 시각·사람 이름 (11/20 추가, 바꾼 적 없으면 사람은 null) */
+    public record ThresholdResponse(int id, String equipmentId, String process, String metric, Double low, Double high,
+                                    OffsetDateTime updatedAt, String updatedBy) {}
 
     /** M-11 */
     public record ThresholdUpdateRequest(Double low, Double high) {}

@@ -68,6 +68,18 @@ class PlanningApiTest {
     }
 
     @Test
+    @WithMockUser(username = "u1", roles = "ADMIN")
+    void g03SavesWhoChangedPlan() throws Exception {
+        // 저장한 로그인 사용자 이름이 G-02 응답에 (11/20)
+        mvc.perform(put("/api/production/plans/2026-11-18").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lineId\":\"A\",\"planQty\":100}"))
+                .andExpect(jsonPath("$.updatedBy").value("김관리"))
+                .andExpect(jsonPath("$.updatedAt").exists());
+        mvc.perform(get("/api/production/plans").param("from", "2026-11-18").param("to", "2026-11-18"))
+                .andExpect(jsonPath("$[0].updatedBy").value("김관리"));
+    }
+
+    @Test
     void r01r02Reports() throws Exception {
         mvc.perform(get("/api/reassignments").param("from", "2026-11-10").param("to", "2026-11-10"))
                 .andExpect(status().isOk())

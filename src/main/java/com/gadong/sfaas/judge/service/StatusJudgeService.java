@@ -32,7 +32,10 @@ public class StatusJudgeService {
 
     /** 한 번 판정할 때 읽은 값 */
     record Snapshot(LocalDateTime now, Map<String, LocalDateTime> lastSeen, Set<String> fault, Map<String, Long> planned,
-                    Map<String, Long> upstream, Set<String> startedToday) {}
+                    Map<String, Long> upstream, Set<String> startedToday, Set<String> holding) {}
+
+    /** 프레스 1~3단이 끝낸 제품을 이만큼 넘게 들고 있으면 "다음 단을 기다림"으로 봐요 (끝·시작 메시지 사이 순간은 빼려고) */
+    static final long HOLD_SECONDS = 2;
 
     private final NamedParameterJdbcTemplate jdbc;
     private final MonitoringService monitoringService;
@@ -88,13 +91,18 @@ public class StatusJudgeService {
         statuses.stream().filter(st -> changed.contains(st.equipmentId())).forEach(pushService::pushStatus);
     }
 
-    /** 3절 우선순위: D 고장 신호 > DC 신호 10초 끊김(신호 행 없음 포함) > S 진행 중 계획정지 > I 앞 재공 없음 > R */
+    /**
+     * 3절 우선순위: D 고장 신호 > DC 신호 10초 끊김(신호 행 없음 포함) > S 진행 중 계획정지 > I 대기 > R.
+     * I는 두 가지: 끝낸 제품을 들고 다음 단을 기다림(UP_BLOCKED, 프레스 1~3단, 11/20) · 앞 재공 없음(UP_SHORTAGE)
+     */
     Decision decide(Equipment e, Snapshot s) {
         if (s.fault().contains(e.id())) return new Decision("D", "UP_BREAKDOWN", null);
         LocalDateTime seen = s.lastSeen().get(e.id());
         if (seen == null || seen.isBefore(s.now().minusSeconds(DC_SECONDS))) return new Decision("DC", null, null);
         Long planned = s.planned().get(e.id()); // 공용 설비(도장·검사)는 S-02가 이벤트를 만들지 않아서 S가 안 나와요
         if (planned != null) return new Decision("S", null, planned);
+        // 프레스 1~3단은 단 사이에 쌓을 자리가 없어 뒤 단이 받아 갈 때까지 끝낸 제품을 들고 서 있어요 → 후공정 정지 대기
+        if (s.holding().contains(e.id())) return new Decision("I", "UP_BLOCKED", null);
         if (s.upstream().getOrDefault(e.id(), 0L) <= 0) {
             // 오늘 첫 제품이 들어오기 전 대기는 가동 준비라 비가동이 아니에요 (상태는 I로 보여 주되 사유·비가동 이벤트 없음, 11/18)
             return new Decision("I", s.startedToday().contains(e.id()) ? "UP_SHORTAGE" : null, null);
@@ -124,7 +132,22 @@ public class StatusJudgeService {
         Set<String> startedToday = new HashSet<>(jdbc.queryForList(
                 "SELECT DISTINCT equipment_id FROM product_flow WHERE started_at >= :day",
                 Map.of("day", now.toLocalDate().atStartOfDay()), String.class));
-        return new Snapshot(now, lastSeen, fault, planned, upstream(equipment), startedToday);
+        return new Snapshot(now, lastSeen, fault, planned, upstream(equipment), startedToday, holding(now));
+    }
+
+    /**
+     * 끝낸 제품을 들고 다음 단을 기다리는 프레스 1~3단: 그 단에서 끝났고(HOLD_SECONDS 넘게) 다음 단에 아직 안 들어간 제품이 있고,
+     * 지금 처리 중인 제품은 없음. 공정 불량(폐기) 제품은 빼요
+     */
+    Set<String> holding(LocalDateTime now) {
+        Set<String> held = new HashSet<>(jdbc.queryForList("""
+                SELECT DISTINCT f.equipment_id FROM product_flow f JOIN equipment e ON e.equipment_id = f.equipment_id
+                WHERE e.process_id = 'PRESS' AND e.seq_no < :last AND f.ended_at IS NOT NULL AND f.ended_at <= :hold
+                  AND NOT EXISTS (SELECT 1 FROM product_flow g WHERE g.product_id = f.product_id AND g.flow_id > f.flow_id)
+                  AND NOT EXISTS (SELECT 1 FROM press_data x WHERE x.product_id = f.product_id AND x.result = 'NG')""",
+                Map.of("last", PRESS_STAGES.size(), "hold", now.minusSeconds(HOLD_SECONDS)), String.class));
+        held.removeAll(flow.inProcess().keySet());
+        return held;
     }
 
     /**

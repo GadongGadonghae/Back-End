@@ -14,7 +14,7 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-/** M-17 공장 안 제품 위치: 설비 안이면 equipmentId, 공정 사이면 pile. 폐기·출고·프레스 단 사이는 빠져요 */
+/** M-17 공장 안 제품 위치: 설비 안이면 equipmentId, 공정 사이면 pile. 프레스 1~3단이 들고 있는 제품은 그 프레스 안. 폐기·출고는 빠져요 */
 @SpringBootTest
 @WithMockUser(username = "testuser", roles = "MANAGER")
 @AutoConfigureMockMvc
@@ -37,7 +37,7 @@ class FlowPositionsApiTest {
                         + "('P1','A-SL','A','2026-11-19 09:00:00','2026-11-19 09:00:16'), "      // 슬리팅 뒤 → SL-PR
                         + "('P2','A-SL','A','2026-11-19 09:00:16','2026-11-19 09:00:32'), "
                         + "('P2','A-PR1','A','2026-11-19 09:00:32',null), "                       // PR1 처리 중 → A-PR1
-                        + "('P3','A-PR1','A','2026-11-19 09:00:00','2026-11-19 09:00:17'), "     // PR1 뒤(단 사이) → 빠짐
+                        + "('P3','A-PR1','A','2026-11-19 09:00:00','2026-11-19 09:00:17'), "     // PR1이 끝내고 들고 있음 → A-PR1 안
                         + "('P4','A-PR4','A','2026-11-19 09:01:00','2026-11-19 09:01:17'), "     // PR4 뒤 → PR-WD
                         + "('P5','A-WD','A','2026-11-19 09:02:00','2026-11-19 09:02:17'), "      // 용접 뒤 → WD-PT
                         + "('P6','PT1','A','2026-11-19 09:03:00','2026-11-19 09:03:04'), "       // 도장 뒤 → PT1:PT-VI
@@ -52,18 +52,21 @@ class FlowPositionsApiTest {
         mvc.perform(get("/api/production/flow/positions"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.at").exists())
-                .andExpect(jsonPath("$.products.length()").value(6))
+                .andExpect(jsonPath("$.products.length()").value(7))
                 .andExpect(jsonPath("$.products[0].productId").value("P1"))
                 .andExpect(jsonPath("$.products[0].pile").value("SL-PR"))
                 .andExpect(jsonPath("$.products[0].equipmentId").doesNotExist())
                 .andExpect(jsonPath("$.products[1].productId").value("P2"))
                 .andExpect(jsonPath("$.products[1].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$.products[1].pile").doesNotExist())
-                .andExpect(jsonPath("$.products[2].pile").value("PR-WD"))
-                .andExpect(jsonPath("$.products[3].pile").value("WD-PT"))
-                .andExpect(jsonPath("$.products[4].pile").value("PT1:PT-VI"))
-                .andExpect(jsonPath("$.products[5].productId").value("P8"))
-                .andExpect(jsonPath("$.products[5].equipmentId").value("VI"))
-                .andExpect(jsonPath("$.products[5].lineId").value("A"));
+                .andExpect(jsonPath("$.products[2].productId").value("P3"))
+                .andExpect(jsonPath("$.products[2].equipmentId").value("A-PR1"))
+                .andExpect(jsonPath("$.products[2].pile").doesNotExist())
+                .andExpect(jsonPath("$.products[3].pile").value("PR-WD"))
+                .andExpect(jsonPath("$.products[4].pile").value("WD-PT"))
+                .andExpect(jsonPath("$.products[5].pile").value("PT1:PT-VI"))
+                .andExpect(jsonPath("$.products[6].productId").value("P8"))
+                .andExpect(jsonPath("$.products[6].equipmentId").value("VI"))
+                .andExpect(jsonPath("$.products[6].lineId").value("A"));
     }
 }

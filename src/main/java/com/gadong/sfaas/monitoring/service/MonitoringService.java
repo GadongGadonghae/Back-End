@@ -13,6 +13,7 @@ import com.gadong.sfaas.judge.repository.AlarmRepository;
 import com.gadong.sfaas.master.entity.Equipment;
 import com.gadong.sfaas.master.entity.Line;
 import com.gadong.sfaas.master.entity.PaintRouteHistory;
+import com.gadong.sfaas.auth.service.CurrentUser;
 import com.gadong.sfaas.master.entity.Threshold;
 import com.gadong.sfaas.master.repository.LineRepository;
 import com.gadong.sfaas.master.repository.PaintRouteHistoryRepository;
@@ -56,13 +57,14 @@ public class MonitoringService {
     private final LineRepository lineRepository;
     private final ProcessRepository processRepository;
     private final ThresholdRepository thresholdRepository;
+    private final CurrentUser currentUser;
     private final AlarmRepository alarmRepository;
     private final PaintRouteHistoryRepository paintRouteHistoryRepository;
     private final UserLookup users;
     private final ProductionStats productionStats;
 
     public MonitoringService(NamedParameterJdbcTemplate jdbc, MasterService masterService, LineRepository lineRepository,
-                             ProcessRepository processRepository, ThresholdRepository thresholdRepository,
+                             ProcessRepository processRepository, ThresholdRepository thresholdRepository, CurrentUser currentUser,
                              AlarmRepository alarmRepository, PaintRouteHistoryRepository paintRouteHistoryRepository,
                              UserLookup users, ProductionStats productionStats) {
         this.jdbc = jdbc;
@@ -70,6 +72,7 @@ public class MonitoringService {
         this.lineRepository = lineRepository;
         this.processRepository = processRepository;
         this.thresholdRepository = thresholdRepository;
+        this.currentUser = currentUser;
         this.alarmRepository = alarmRepository;
         this.paintRouteHistoryRepository = paintRouteHistoryRepository;
         this.users = users;
@@ -198,14 +201,15 @@ public class MonitoringService {
     public List<ThresholdResponse> thresholds(String process, String equipmentId) {
         if (equipmentId != null) masterService.equipment(equipmentId);
         MapSqlParameterSource p = new MapSqlParameterSource();
-        StringBuilder sql = new StringBuilder("SELECT t.threshold_id, t.equipment_id, e.process_id, t.item_name, t.lower_limit, t.upper_limit"
-                + " FROM threshold t JOIN equipment e ON e.equipment_id = t.equipment_id WHERE 1 = 1");
+        StringBuilder sql = new StringBuilder("SELECT t.threshold_id, t.equipment_id, e.process_id, t.item_name, t.lower_limit, t.upper_limit,"
+                + " t.updated_at, u.user_name FROM threshold t JOIN equipment e ON e.equipment_id = t.equipment_id"
+                + " LEFT JOIN users u ON u.user_id = t.updated_by WHERE 1 = 1");
         Sql.eq(sql, p, "e.process_id", "process", process == null ? null : process.toUpperCase());
         Sql.eq(sql, p, "t.equipment_id", "eq", equipmentId);
         sql.append(" ORDER BY t.threshold_id");
         return jdbc.query(sql.toString(), p, (rs, n) -> new ThresholdResponse(rs.getInt("threshold_id"), rs.getString("equipment_id"),
                 rs.getString("process_id"), ProcessData.camel(rs.getString("item_name")), toDouble(rs.getBigDecimal("lower_limit")),
-                toDouble(rs.getBigDecimal("upper_limit"))));
+                toDouble(rs.getBigDecimal("upper_limit")), Kst.of(Kst.local(rs.getObject("updated_at"))), rs.getString("user_name")));
     }
 
     /** M-11 */
@@ -216,8 +220,7 @@ public class MonitoringService {
         }
         Threshold threshold = thresholdRepository.findById(id).orElseThrow(() ->
                 new BusinessException(ErrorCode.THRESHOLD_NOT_FOUND, "알람 기준치 " + id + "를 찾을 수 없습니다"));
-        // TODO(BE2 연동): 수정한 사람(updated_by)은 JWT 로그인 사용자로 채워요
-        threshold.update(BigDecimal.valueOf(request.low()), BigDecimal.valueOf(request.high()), Kst.now());
+        threshold.update(BigDecimal.valueOf(request.low()), BigDecimal.valueOf(request.high()), Kst.now(), currentUser.id());
         return new ThresholdUpdateResponse(id, request.low(), request.high(), Kst.of(threshold.getUpdatedAt()));
     }
 

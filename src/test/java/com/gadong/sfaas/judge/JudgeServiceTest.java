@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import com.gadong.sfaas.judge.service.ProcessJudgeService;
 import com.gadong.sfaas.judge.service.StatusJudgeService;
 import com.gadong.sfaas.push.PushService;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -131,6 +132,25 @@ class JudgeServiceTest {
         statusJudge.judge();
         assertThat(status("A-WD")).isEqualTo("I");
         assertThat(jdbc.queryForList("select code from downtime_event where equipment_id = 'A-WD'", String.class)).containsExactly("UP_SHORTAGE");
+    }
+
+    @Test
+    void statusJudge_pressHoldingFinishedProduct_isBlockedIdle() {
+        // 프레스 1단이 끝낸 제품을 들고 2단을 기다림(5초째) → I, 사유 UP_BLOCKED (재공부족 아님)
+        LocalDateTime now = com.gadong.sfaas.global.util.Kst.now();
+        jdbc.update("insert into equipment_signal(equipment_id, last_seen_at, fault) values ('A-PR1', ?, 0)", now);
+        jdbc.update("insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values ('H1', 'A-PR1', 'A', ?, ?)",
+                now.minusSeconds(22), now.minusSeconds(5));
+        statusJudge.judge();
+        assertThat(status("A-PR1")).isEqualTo("I");
+        assertThat(jdbc.queryForList("select code from downtime_event where equipment_id = 'A-PR1'", String.class)).containsExactly("UP_BLOCKED");
+
+        // 끝나자마자(2초 안)는 넘기는 중이라 기다림으로 안 봐요 → 앞 재공 없으면 재공부족
+        jdbc.update("update product_flow set ended_at = ? where product_id = 'H1'", now.minusSeconds(1));
+        jdbc.update("delete from equipment_status_history");
+        jdbc.update("delete from downtime_event");
+        statusJudge.judge();
+        assertThat(jdbc.queryForList("select code from downtime_event where equipment_id = 'A-PR1'", String.class)).containsExactly("UP_SHORTAGE");
     }
 
     private String status(String id) {

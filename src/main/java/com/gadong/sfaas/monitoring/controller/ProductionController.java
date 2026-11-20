@@ -82,7 +82,7 @@ public class ProductionController {
 
     @Operation(summary = "M-17 공장 안 제품 위치 (3D 물류)",
             description = "입고 뒤·출고 전 제품마다 지금 위치(product_flow 마지막 기록). 설비 안에서 처리 중이면 equipmentId, "
-                    + "공정 사이에서 기다리면 pile(SL-PR·PR-WD·WD-PT·PT1:PT-VI·PT2:PT-VI). 공정 불량(폐기)·출고 제품과 프레스 단 사이 재공은 빼요. "
+                    + "공정 사이에서 기다리면 pile(SL-PR·PR-WD·WD-PT·PT1:PT-VI·PT2:PT-VI). 프레스 1~3단이 끝내고 들고 있는 제품은 그 프레스 안(equipmentId). 공정 불량(폐기)·출고 제품은 빼요. "
                     + "프론트가 1초마다 불러요 (나중에 웹소켓 /topic/flow로 바꿔도 모양은 같음)")
     @GetMapping("/production/flow/positions")
     public FlowPositionsResponse flowPositions() {
