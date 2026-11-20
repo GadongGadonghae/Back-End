@@ -172,23 +172,33 @@ public class AvailabilityService {
 
     /**
      * U-08 통신 끊김: equipment_status_history의 DC 구간 (상태 신호 10초 이상 끊김). 비가동 번호와 겹치지 않게 eventId = −log_id.
-     * 메모 저장(U-09)은 안 돼요 (downtime_event가 아니라서)
+     * 메모 저장(U-09)은 안 돼요 (downtime_event가 아니라서). 공장 전체가 한꺼번에 끊긴 것(꺼짐·재생 끝)은 빼요
      */
     private List<Stop> commsLosses(LocalDate from, LocalDate to, String lineId, String process, String equipmentId, Boolean inProgress) {
-        MapSqlParameterSource p = Sql.period(from, to);
-        StringBuilder sql = new StringBuilder("""
+        // 기간 안 DC 구간 전부 (공장 꺼짐을 가려내려고 라인·설비 조건은 아래에서 메모리로 걸러요)
+        List<Stop> all = jdbc.query("""
                 SELECT s.log_id, s.equipment_id, e.line_id, e.process_id, s.started_at, s.ended_at
                 FROM equipment_status_history s JOIN equipment e ON e.equipment_id = s.equipment_id
-                WHERE s.status = 'DC' AND s.started_at < :to AND (s.ended_at IS NULL OR s.ended_at > :from)""");
-        Sql.eq(sql, p, "e.line_id", "lineId", lineId);
-        Sql.eq(sql, p, "e.process_id", "process", process);
-        Sql.eq(sql, p, "s.equipment_id", "eq", equipmentId);
-        if (inProgress != null) sql.append(inProgress ? " AND s.ended_at IS NULL" : " AND s.ended_at IS NOT NULL");
-        return jdbc.query(sql.toString(), p, (rs, n) -> new Stop(-rs.getLong("log_id"), rs.getString("equipment_id"),
+                WHERE s.status = 'DC' AND s.started_at < :to AND (s.ended_at IS NULL OR s.ended_at > :from)
+                ORDER BY s.started_at""", Sql.period(from, to), (rs, n) -> new Stop(-rs.getLong("log_id"), rs.getString("equipment_id"),
                 rs.getString("line_id"), rs.getString("process_id"), "DC", null,
                 rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class),
                 "상태 신호 10초 이상 끊김", null, null, null, null));
+        // 공장 꺼짐(백엔드 켜짐·재생 끝·Node-RED 정지): 가동 설비 절반 이상이 ±5초 안에 한꺼번에 DC → 통신 고장이 아니라서 빼요 (11/20)
+        Integer active = jdbc.queryForObject("SELECT COUNT(*) FROM equipment WHERE is_active = TRUE", Map.of(), Integer.class);
+        int plantWide = Math.max(2, (active == null ? 0 : active) / 2);
+        List<LocalDateTime> starts = all.stream().map(Stop::start).toList();
+        return all.stream()
+                .filter(s -> starts.stream().filter(t -> Math.abs(Duration.between(t, s.start()).getSeconds()) <= PLANT_OFF_SECONDS).count() < plantWide)
+                .filter(s -> lineId == null || lineId.equals(s.lineId()))
+                .filter(s -> process == null || process.equals(s.process()))
+                .filter(s -> equipmentId == null || equipmentId.equals(s.equipmentId()))
+                .filter(s -> inProgress == null || inProgress == (s.end() == null))
+                .toList();
     }
+
+    /** 이 초 안에 가동 설비 절반 이상이 함께 DC가 되면 공장 꺼짐으로 봐요 */
+    private static final long PLANT_OFF_SECONDS = 5;
 
     private static DowntimeEventResponse toResponse(Stop s) {
         return new DowntimeEventResponse(s.id(), s.lineId(), s.equipmentId(), s.process(), s.status(), s.code(),

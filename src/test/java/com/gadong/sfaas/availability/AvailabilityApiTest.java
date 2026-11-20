@@ -110,6 +110,12 @@ class AvailabilityApiTest {
                 .andExpect(jsonPath("$.items[3].inProgress").value(true))
                 .andExpect(jsonPath("$.items[3].reasonCode").isEmpty())
                 .andExpect(jsonPath("$.items[3].startAt").value("2026-11-10T10:00:00+09:00"));
+        // 공장 꺼짐: 가동 설비(3대) 절반 이상이 같은 순간 DC (백엔드 켜짐·재생 끝) → 통신 고장이 아니라 알람 이력에서 빠져요
+        jdbc.update("insert into equipment_status_history(equipment_id, status, started_at, ended_at) values "
+                + "('B-PR1','DC','2026-11-10 15:00:00','2026-11-10 15:00:06'), ('PT1','DC','2026-11-10 15:00:02','2026-11-10 15:00:06')");
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("minMinutes", "0"))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].equipmentId").value("A-PR1"));
         // DC만, 라인·진행 중 조건도 같이 적용
         mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("lineId", "B"))
                 .andExpect(jsonPath("$.total").value(0));
