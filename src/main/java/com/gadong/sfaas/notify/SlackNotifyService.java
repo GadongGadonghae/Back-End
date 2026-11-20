@@ -58,7 +58,8 @@ public class SlackNotifyService {
             throw new BusinessException(ErrorCode.SLACK_NOT_CONFIGURED);
         }
         ReassignmentDetailResponse report = replanService.report(reportId);
-        Incident incident = incident(report.downtimeId());
+        // 추가 주문·목표 변경 보고서(11/21)는 고장 건이 없어요 → incident = null (메시지·요약이 보고서 내용으로)
+        Incident incident = report.downtimeId() == null ? null : incident(report.downtimeId());
         ReportSummarizer.Summary summary = summarizer.summarize(report, incident);
         Map<String, Object> payload = SlackMessageBuilder.build(report, incident, summary, currentUserName(),
                 properties.appBaseUrl(), Kst.now());

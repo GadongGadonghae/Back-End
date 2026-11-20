@@ -146,7 +146,8 @@ class JudgeServiceTest {
         assertThat(jdbc.queryForList("select code from downtime_event where equipment_id = 'A-PR1'", String.class)).containsExactly("UP_BLOCKED");
 
         // 끝나자마자(2초 안)는 넘기는 중이라 기다림으로 안 봐요 → 앞 재공 없으면 재공부족
-        jdbc.update("update product_flow set ended_at = ? where product_id = 'H1'", now.minusSeconds(1));
+        // 11/21: 판정 직전 시각 기준 (처음 잡은 now를 쓰면 느린 PC에서 그새 2초가 지나 UP_BLOCKED로 판정돼요)
+        jdbc.update("update product_flow set ended_at = ? where product_id = 'H1'", com.gadong.sfaas.global.util.Kst.now().minusNanos(300_000_000));
         jdbc.update("delete from equipment_status_history");
         jdbc.update("delete from downtime_event");
         statusJudge.judge();

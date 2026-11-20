@@ -30,10 +30,10 @@ public class ReportSummarizer {
     private static final int MAX_LINES = 4;
     private static final int MAX_LINE_LENGTH = 200;
     private static final String SYSTEM_PROMPT = """
-            당신은 제조 현장 관리자에게 슬랙으로 보낼 설비 고장 알림을 요약한다.
+            당신은 제조 현장 관리자에게 슬랙으로 보낼 계획수정 보고서(설비 고장 또는 추가 주문·목표 변경) 알림을 요약한다.
             제공된 JSON 사실만 사용하고, 숫자를 바꾸거나 없는 내용을 추측하지 않는다.
             한국어로 3줄 이내, 각 줄은 80자 이내로 쓴다.
-            1줄: 어떤 설비가 언제 왜 멈췄는지. 2줄: 재배정 계획의 핵심(라인별 추가 수량). 3줄: 목표 영향 또는 가장 중요한 조치.
+            1줄: 어떤 설비가 언제 왜 멈췄는지 (equipment가 없으면 추가 주문·목표 변경 요청 내용). 2줄: 재배정 계획의 핵심(라인별 추가 수량). 3줄: 목표 영향 또는 가장 중요한 조치.
             반드시 다음 JSON 형식만 반환한다. {"lines":["...","...","..."]}
             """;
 
@@ -73,14 +73,16 @@ public class ReportSummarizer {
 
     private List<String> callLlm(ReassignmentDetailResponse report, SlackNotifyService.Incident incident) throws Exception {
         Map<String, Object> facts = new LinkedHashMap<>();
-        facts.put("equipment", incident.equipmentName() + " (" + report.equipmentId() + ")");
-        facts.put("line", incident.lineName());
-        facts.put("process", incident.processName());
-        facts.put("downtimeCode", incident.codeName());
-        facts.put("detail", report.detail());
-        facts.put("startedAt", report.startedAt());
-        facts.put("endedAt", Kst.of(incident.endedAt()));
-        facts.put("ongoing", incident.endedAt() == null);
+        if (incident != null) {
+            facts.put("equipment", incident.equipmentName() + " (" + report.equipmentId() + ")");
+            facts.put("line", incident.lineName());
+            facts.put("process", incident.processName());
+            facts.put("downtimeCode", incident.codeName());
+            facts.put("startedAt", report.startedAt());
+            facts.put("endedAt", Kst.of(incident.endedAt()));
+            facts.put("ongoing", incident.endedAt() == null);
+        }
+        facts.put("detail", report.detail());   // 추가 주문·목표 변경은 요청 문장 (11/21)
         facts.put("reportKind", report.kind());
         facts.put("shortageQty", report.lossQty());
         facts.put("factoryTargetQty", report.targetQty());
@@ -96,6 +98,7 @@ public class ReportSummarizer {
         }
         Map<String, Object> body = Map.of(
                 "model", properties.model(),
+                "reasoning_effort", geminiEffort(properties.effort()),   // 11/21 Gemini 생각 깊이 (기본 low: 사실 정리라 빠르게, 안 주면 깊게 생각해서 1분 넘게 걸림)
                 "temperature", 0.2,
                 "response_format", Map.of("type", "json_object"),
                 "messages", List.of(
@@ -126,9 +129,15 @@ public class ReportSummarizer {
     /** LLM 없이 숫자만으로 만드는 요약 */
     static List<String> template(ReassignmentDetailResponse report, SlackNotifyService.Incident incident) {
         List<String> lines = new ArrayList<>();
-        String cause = incident.codeName() + (report.detail() == null || report.detail().isBlank() ? "" : "(" + report.detail() + ")");
-        String state = incident.endedAt() == null ? "현재 정지 중" : SlackMessageBuilder.time(Kst.of(incident.endedAt())) + " 해제";
-        lines.add(incident.equipmentName() + " " + cause + " · " + SlackMessageBuilder.time(report.startedAt()) + " 발생, " + state + ".");
+        if (incident == null) {
+            // 추가 주문·목표 변경 (고장 건 없음, 11/21)
+            lines.add(("order".equals(report.kind()) ? "추가 주문" : "생산 목표 변경") + " 계획수정 보고서입니다"
+                    + (report.detail() == null || report.detail().isBlank() ? "." : " (요청: " + report.detail() + ")."));
+        } else {
+            String cause = incident.codeName() + (report.detail() == null || report.detail().isBlank() ? "" : "(" + report.detail() + ")");
+            String state = incident.endedAt() == null ? "현재 정지 중" : SlackMessageBuilder.time(Kst.of(incident.endedAt())) + " 해제";
+            lines.add(incident.equipmentName() + " " + cause + " · " + SlackMessageBuilder.time(report.startedAt()) + " 발생, " + state + ".");
+        }
 
         List<String> adds = report.details().stream().filter(d -> d.addQty() > 0)
                 .map(d -> SlackMessageBuilder.targetLabel(d.targetLineId()) + " +" + String.format("%,d", d.addQty()) + "개")
@@ -143,5 +152,11 @@ public class ReportSummarizer {
                     : "재배정하면 오늘 목표를 맞출 수 있습니다.");
         }
         return lines;
+    }
+
+    /** Gemini(OpenAI 호환) reasoning_effort: low · medium · high 만 받아요. 그 밖의 값은 low (11/21) */
+    static String geminiEffort(String effort) {
+        String e = effort == null ? "" : effort.trim().toLowerCase();
+        return e.equals("medium") || e.equals("high") ? e : "low";
     }
 }

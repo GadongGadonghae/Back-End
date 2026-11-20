@@ -29,9 +29,19 @@ final class SlackMessageBuilder {
     static Map<String, Object> build(ReassignmentDetailResponse r, SlackNotifyService.Incident incident,
                                      ReportSummarizer.Summary summary, String sender, String appBaseUrl, LocalDateTime now) {
         List<Map<String, Object>> blocks = new ArrayList<>();
-        String headline = "🚨 " + incident.equipmentName() + " 고장 · 계획수정 보고서";
+        String headline = incident == null ? "📋 " + kindLabel(r.kind()) + " · 계획수정 보고서"
+                : "🚨 " + incident.equipmentName() + " 고장 · 계획수정 보고서";
         blocks.add(Map.of("type", "header", "text", plain(cut(headline, HEADER_MAX))));
 
+        if (incident == null) {
+            // ── 추가 주문 · 목표 변경 (고장 건 없음, 11/21) ──
+            blocks.add(fields(
+                    "*보고서 종류*\n" + kindLabel(r.kind()),
+                    "*기준 시각*\n" + time(r.baseAt() != null ? r.baseAt() : r.createdAt()),
+                    "*요청 내용*\n" + (blank(r.detail()) ? "-" : esc(r.detail())),
+                    "*공장 목표*\n" + (r.targetQty() == null ? "-" : num(r.targetQty()) + "개")));
+            blocks.add(Map.of("type", "divider"));
+        } else {
         // ── 고장 장비 ──
         String state = incident.endedAt() == null
                 ? "🔴 정지 중 (" + duration(Duration.between(Kst.local(r.startedAt()), now)) + "째)"
@@ -42,6 +52,7 @@ final class SlackMessageBuilder {
                 "*비가동 사유*\n" + esc(incident.codeName()) + (blank(r.detail()) ? "" : " — " + esc(r.detail())),
                 "*발생 · 상태*\n" + time(r.startedAt()) + "\n" + state));
         blocks.add(Map.of("type", "divider"));
+        }
 
         // ── AI 요약 ──
         String summaryTitle = ReportSummarizer.TEMPLATE_MODEL.equals(summary.model()) ? "*📝 요약* _(템플릿 문장)_" : "*🤖 AI 요약*";
@@ -117,6 +128,8 @@ final class SlackMessageBuilder {
             case "line" -> "라인 전체 정지";
             case "paint" -> "도장 1대 → 다른 1대";
             case "vision" -> "대체 설비 없음";
+            case "order" -> "추가 주문 배정";
+            case "target" -> "생산 목표 변경";
             default -> kind;
         };
     }

@@ -272,6 +272,7 @@ public class AiReportService {
         try {
             Map<String, Object> body = Map.of(
                     "model", properties.model(),
+                    "reasoning_effort", geminiEffort(properties.effort()),   // 11/21 Gemini 생각 깊이 (기본 low: 사실 정리라 빠르게, 안 주면 깊게 생각해서 1분 넘게 걸림)
                     "temperature", 0.2,
                     "response_format", Map.of("type", "json_object"),
                     "messages", List.of(
@@ -383,5 +384,11 @@ public class AiReportService {
         LlmUnavailableException(String message, Throwable cause) {
             super(message, cause);
         }
+    }
+
+    /** Gemini(OpenAI 호환) reasoning_effort: low · medium · high 만 받아요. 그 밖의 값은 low (11/21) */
+    static String geminiEffort(String effort) {
+        String e = effort == null ? "" : effort.trim().toLowerCase();
+        return e.equals("medium") || e.equals("high") ? e : "low";
     }
 }

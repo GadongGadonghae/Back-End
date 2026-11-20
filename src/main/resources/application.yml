@@ -43,7 +43,7 @@ ai:
     base-url: ${AI_REPORT_BASE_URL:https://generativelanguage.googleapis.com/v1beta/openai}
     api-key: ${AI_REPORT_API_KEY:${ANTHROPIC_API_KEY:}}
     model: ${AI_REPORT_MODEL:gemini-3.8-flash}
-    effort: ${AI_REPORT_EFFORT:low}                     # Claude 생각 깊이 (low · medium · high). 보고서 문장은 사실 정리라 low
+    effort: ${AI_REPORT_EFFORT:low}                     # 생각 깊이 (low · medium · high). Gemini는 reasoning_effort로 보내요 (11/21). 보고서 문장은 사실 정리라 low
     timeout-seconds: ${AI_REPORT_TIMEOUT_SECONDS:60}   # LLM 연결·응답 제한 시간 (gemini-3.8-flash는 20초 안팎). 넘으면 템플릿 문장으로 대체
     # 재배정 후보 라인 상태 (RSID). D(고장)·S(계획정지)는 제외. I(대기) 포함 여부는 팀 확정 후 조정
     allocatable-statuses: R,DC,I
