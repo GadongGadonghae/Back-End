@@ -95,7 +95,8 @@ public class PlanningController {
     @PostMapping("/reassignments")
     @ResponseStatus(HttpStatus.CREATED)
     public ReassignmentDetailResponse createReport(@RequestBody ReassignmentCreateRequest request) {
-        return replanService.create(request == null ? null : request.downtimeId(), request == null ? null : request.additionalRequest());
+        return replanService.create(request == null ? null : request.downtimeId(), request == null ? null : request.additionalRequest(),
+                request == null ? null : request.basis());
     }
 
     @Operation(summary = "R-04 AI 계획수정 보고서 승인(결재)",

@@ -45,7 +45,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>vision: 비전 검사기는 1대뿐이라 대신할 설비가 없어요. 부족 = 공장 목표 − 실적, 전부 미달</li>
  *   <li>나누기: 부족 수량을 남은 능력 비율대로 (내림 후 나머지는 소수점 큰 쪽부터). 계산과 문장은 AiReportService가 해요</li>
  * </ul>
- * 계획만 제안하고 목표·설비 계획은 바꾸지 않아요.
+ * target(11/20): 고장 건 없이 오늘 생산 목표 기준. 계획정지(S) 중인 라인의 남은 계획을 가동 중인 라인에 나눠요 (목표 변동 → 생산관리팀장이 작성).
+ * 만들 때는 제안만 해요. 공장장이 승인(R-04)하면 그때 적용해요: line·target = 라인별 생산 목표, paint = 도장 경로 전환 (11/20).
  */
 @Service
 @Transactional(readOnly = true)
@@ -61,16 +62,19 @@ public class ReplanService {
     private final UserRepository userRepository;
     private final AiReportService aiReportService;
     private final ObjectMapper objectMapper;
+    private final com.gadong.sfaas.monitoring.service.MonitoringService monitoringService;
 
     public ReplanService(NamedParameterJdbcTemplate jdbc, ReassignmentReportRepository reportRepository,
                          ReassignmentDetailRepository detailRepository, UserRepository userRepository,
-                         AiReportService aiReportService, ObjectMapper objectMapper) {
+                         AiReportService aiReportService, ObjectMapper objectMapper,
+                         com.gadong.sfaas.monitoring.service.MonitoringService monitoringService) {
         this.jdbc = jdbc;
         this.reportRepository = reportRepository;
         this.detailRepository = detailRepository;
         this.userRepository = userRepository;
         this.aiReportService = aiReportService;
         this.objectMapper = objectMapper;
+        this.monitoringService = monitoringService;
     }
 
     /** 고장 건 정보 */
@@ -81,6 +85,72 @@ public class ReplanService {
     private record Row(String target, int remainingPlan, int capacity) {}
 
     // ── R-03 만들기 ──
+
+    /** R-03 진입점: basis = "target"이면 목표 기준 보고서, 아니면 고장 건 보고서 */
+    @Transactional
+    public ReassignmentDetailResponse create(Long downtimeId, String additionalRequest, String basis) {
+        return "target".equalsIgnoreCase(basis) ? createForTarget(additionalRequest) : create(downtimeId, additionalRequest);
+    }
+
+    /**
+     * 목표 변동 보고서 (11/20): 오늘 목표 기준. 계획정지(S) 중인 라인 = 멈춘 쪽, 그 남은 계획을 가동 중인 라인에 남은 능력 비율대로.
+     * 공장장이 목표를 올리면 라인별로 똑같이 나눠 저장돼서(설정 화면), 멈춘 라인 몫을 가동 라인이 맡는 안을 만들어요
+     */
+    @Transactional
+    public ReassignmentDetailResponse createForTarget(String additionalRequest) {
+        String request = additionalRequest == null || additionalRequest.isBlank() ? null : additionalRequest.trim();
+        if (request != null && request.length() > 500) throw invalid("추가 요청은 500자까지 쓸 수 있습니다");
+        LocalDateTime now = Kst.now();
+        LocalDate day = now.toLocalDate();
+        long remainingSec = Math.max(0, Duration.between(now, day.plusDays(1).atStartOfDay()).getSeconds());
+        Map<String, Integer> targets = targets(day);
+        if (targets.isEmpty()) throw invalid("오늘 생산 목표가 없습니다. 설정 > 생산 목표에서 먼저 정해 주세요");
+        int plantTarget = targets.values().stream().mapToInt(Integer::intValue).sum();
+        List<String> stopped = stoppedLines();
+        BigDecimal ct = cycleTime("'SLITTING', 'PRESS', 'WELDING'");
+        int stoppedPlan = stopped.stream().mapToInt(l -> targets.getOrDefault(l, 0)).sum();
+        int stoppedDone = stopped.stream().mapToInt(l -> done(day, now, l, null)).sum();
+        List<Row> rows = new ArrayList<>();
+        for (String line : jdbc.queryForList("SELECT line_id FROM line ORDER BY line_id", Map.of(), String.class)) {
+            if (stopped.contains(line) || downNow(null, line)) continue;
+            int remainingPlan = Math.max(0, targets.getOrDefault(line, 0) - done(day, now, line, null));
+            rows.add(new Row(line, remainingPlan, capacity(remainingSec, ct, remainingPlan)));
+        }
+        String stoppedKey = stopped.isEmpty() ? "-" : String.join("·", stopped);
+        String reason = "오늘 생산 목표 " + plantTarget + "개" + (stopped.isEmpty() ? "" : ", 계획정지 라인 " + stoppedKey);
+        AiReportResponse ai = aiReportService.generate(new AiReportRequest(
+                0L, stoppedKey, "TARGET", "생산 목표 변경", reason, Kst.of(now), stoppedPlan, stoppedDone, 0, "24:00",
+                rows.stream().map(r -> new AiReportRequest.LineCondition(r.target(), CANDIDATE, r.capacity(), r.remainingPlan(), null)).toList(),
+                "오늘 공장 생산 목표가 " + plantTarget + "개로 바뀜. 목표는 라인마다 똑같이 나눠 저장되는데 "
+                        + (stopped.isEmpty() ? "계획정지 라인이 없어 모든 라인이 자기 몫을 만듦."
+                        : stoppedKey + "라인은 계획정지 중이라 그 남은 계획을 가동 중인 라인(lineConditions)이 남은 능력 비율대로 나눠 맡는 안.")
+                        + " 기준 시각 " + now.toLocalTime().withNano(0) + ", 자정까지 " + remainingSec / 60 + "분, CT " + ct.stripTrailingZeros().toPlainString()
+                        + "초. availableCapacity = 남은 시간 ÷ CT − 남은 계획. 수량은 allocation 값을 그대로 쓰고, 승인 전에는 계획을 바꾸지 않음.",
+                request));
+        String title = ai.mock() ? "생산 목표 변경에 따른 생산계획 수정 제안" : ai.title();
+        String markdown = ai.mock() && ai.markdown() != null ? ai.markdown().replace(ai.title(), title) : ai.markdown();
+        Map<String, Integer> add = new HashMap<>();
+        ai.allocations().forEach(a -> add.put(a.lineId(), a.quantity()));
+        int shortage = ai.calculatedShortage();
+        int assigned = add.values().stream().mapToInt(Integer::intValue).sum();
+        User user = currentUser();
+        ReassignmentReport saved = reportRepository.save(new ReassignmentReport(null, shortage, now,
+                user == null ? null : user.getUserId(), "target", now, ct, stoppedPlan, stoppedDone, plantTarget,
+                Math.max(0, shortage - assigned), json(new AiContent(title, ai.summary(), ai.actions(), ai.risks(), markdown,
+                        ai.model(), ai.mock(), ai.fallbackReason(), request, ai.requestInterpretation()))));
+        for (Row r : rows) {
+            detailRepository.save(new ReassignmentDetail(saved.getReportId(), r.target(), r.capacity(), add.getOrDefault(r.target(), 0),
+                    r.remainingPlan()));
+        }
+        detailRepository.flush();
+        return toResponse(saved);
+    }
+
+    /** 지금 계획정지(S) 중인 라인 (라인 설비에 끝나지 않은 S 비가동이 있음) */
+    private List<String> stoppedLines() {
+        return jdbc.queryForList("SELECT DISTINCT e.line_id FROM downtime_event d JOIN equipment e ON e.equipment_id = d.equipment_id"
+                + " WHERE d.status = 'S' AND d.ended_at IS NULL AND e.line_id IS NOT NULL ORDER BY e.line_id", Map.of(), String.class);
+    }
 
     /**
      * 고장(D) 건으로 AI 계획수정 보고서를 만들어 저장해요. 누를 때마다 새 보고서예요 (추가 요청을 바꿔 다시 만들 수 있게).
@@ -192,15 +262,86 @@ public class ReplanService {
 
     // ── R-04 승인(결재) ──
 
-    /** 공장장이 보고서를 승인해요 (결재). 계획을 실제로 바꾸지는 않아요 */
+    /**
+     * 공장장이 보고서를 승인하고(결재) 현장에 적용해요 (11/20). 이미 승인된 보고서는 다시 적용하지 않아요.
+     * <ul>
+     *   <li>line·target: 추가 배정만큼 그 라인 목표(production_target)를 늘리고, 멈춘 라인(고장 라인·계획정지 라인) 목표는 그만큼 줄여요(실적 아래로는 안 내림)</li>
+     *   <li>paint: 고장 도장을 쓰던 라인을 배정받은 도장으로 경로 전환 (M-09와 같음)</li>
+     *   <li>vision: 대신할 설비가 없어 적용할 것 없음</li>
+     * </ul>
+     */
     @Transactional
     public ReassignmentDetailResponse approve(long reportId) {
         ReassignmentReport r = reportRepository.findById(reportId).orElseThrow(() ->
                 new BusinessException(ErrorCode.REASSIGNMENT_NOT_FOUND, "재배정 보고서 " + reportId + "를 찾을 수 없습니다"));
         User user = currentUser();
+        if (!Boolean.TRUE.equals(r.getApproved())) apply(r, user);
         r.approve(user == null ? null : user.getUserId(), Kst.now());
         reportRepository.flush();
         return toResponse(r);
+    }
+
+    private void apply(ReassignmentReport r, User user) {
+        List<ReassignmentDetail> rows = detailRepository.findByReportIdOrderByLineIdAsc(r.getReportId());
+        String kind = r.getKind() == null ? "line" : r.getKind();
+        LocalDate day = (r.getBaseAt() == null ? r.getCreatedAt() : r.getBaseAt()).toLocalDate();
+        if ("paint".equals(kind)) {
+            Fault f = fault(r.getDowntimeId());
+            String to = rows.stream().filter(d -> d.getAddedQty() > 0).map(ReassignmentDetail::getLineId).findFirst()
+                    .orElse(rows.isEmpty() ? null : rows.get(0).getLineId());
+            if (to == null) return;
+            for (String line : jdbc.queryForList("SELECT line_id FROM line WHERE current_paint_id = :pt ORDER BY line_id",
+                    Map.of("pt", f.equipmentId()), String.class)) {
+                monitoringService.changePaintRoute(line, new com.gadong.sfaas.monitoring.dto.MonitoringDtos.PaintRouteRequest(
+                        to, "AI 보고서 승인 " + documentNo(r) + " (" + f.equipmentName() + " 고장)"));
+            }
+            return;
+        }
+        if (!"line".equals(kind) && !"target".equals(kind)) return;
+        int moved = 0;
+        for (ReassignmentDetail d : rows) {
+            if (d.getAddedQty() <= 0) continue;
+            addTarget(day, d.getLineId(), d.getAddedQty(), user);
+            moved += d.getAddedQty();
+        }
+        // 멈춘 라인 목표에서 옮긴 만큼 빼요 (고장 라인 1개 또는 계획정지 라인들, 실적 아래로는 안 내림)
+        List<String> from = "line".equals(kind) ? List.of(fault(r.getDowntimeId()).lineId()) : stoppedLinesOf(r, rows);
+        Map<String, Integer> targets = targets(day);
+        for (String line : from) {
+            if (moved <= 0) break;
+            int floor = done(day, day.plusDays(1).atStartOfDay(), line, null);
+            int cut = Math.min(moved, Math.max(0, targets.getOrDefault(line, 0) - floor));
+            if (cut > 0) addTarget(day, line, -cut, user);
+            moved -= cut;
+        }
+    }
+
+    /** 목표 보고서의 멈춘 라인 = 재배정 표에 없는 라인 (만들 때 계획정지였던 라인) */
+    private List<String> stoppedLinesOf(ReassignmentReport r, List<ReassignmentDetail> rows) {
+        java.util.Set<String> listed = new java.util.HashSet<>();
+        rows.forEach(d -> listed.add(d.getLineId()));
+        return jdbc.queryForList("SELECT line_id FROM line ORDER BY line_id", Map.of(), String.class).stream()
+                .filter(l -> !listed.contains(l)).toList();
+    }
+
+    /** 라인 목표에 더하기 (없으면 만들기). 바꾼 사람 = 승인한 공장장 → G-02 updatedBy */
+    private void addTarget(LocalDate day, String lineId, int delta, User user) {
+        Map<String, Object> p = new HashMap<>();
+        p.put("day", day);
+        p.put("line", lineId);
+        p.put("delta", delta);
+        p.put("now", Kst.now());
+        p.put("by", user == null ? null : user.getUserId());
+        int n = jdbc.update("UPDATE production_target SET target_qty = GREATEST(0, target_qty + :delta), created_at = :now, created_by = :by"
+                + " WHERE target_date = :day AND line_id = :line", p);
+        if (n == 0 && delta > 0) {
+            jdbc.update("INSERT INTO production_target (target_date, line_id, target_qty, created_at, created_by)"
+                    + " VALUES (:day, :line, :delta, :now, :by)", p);
+        }
+    }
+
+    private static String documentNo(ReassignmentReport r) {
+        return "AI-RPT-" + r.getCreatedAt().format(DOC_DATE) + "-" + String.format("%03d", r.getReportId());
     }
 
     // ── R-02 조회 ──
@@ -211,7 +352,10 @@ public class ReplanService {
     }
 
     private ReassignmentDetailResponse toResponse(ReassignmentReport r) {
-        Fault f = fault(r.getDowntimeId());
+        // 목표 변경 보고서는 고장 건이 없어요 → 설비·코드 없이, 시작 = 만든 시각
+        Fault f = r.getDowntimeId() == null
+                ? new Fault(0, null, "생산 목표 변경", null, null, null, "TARGET", "생산 목표 변경", "오늘 생산 목표 변경", r.getBaseAt())
+                : fault(r.getDowntimeId());
         List<ReassignmentDetail> rows = detailRepository.findByReportIdOrderByLineIdAsc(r.getReportId());
         int capSum = rows.stream().mapToInt(ReassignmentDetail::getSpareCapacity).sum();
         List<Target> details = rows.stream().map(d -> new Target(d.getLineId(), d.getSpareCapacity(), d.getAddedQty(), d.getRemainingPlan(),
@@ -220,7 +364,7 @@ public class ReplanService {
                 : Math.max(0, Duration.between(r.getBaseAt(), r.getBaseAt().toLocalDate().plusDays(1).atStartOfDay()).getSeconds());
         String createdBy = r.getCreatedBy() == null ? null
                 : userRepository.findById(r.getCreatedBy()).map(User::getUserName).orElse(null);
-        String documentNo = "AI-RPT-" + r.getCreatedAt().format(DOC_DATE) + "-" + String.format("%03d", r.getReportId());
+        String documentNo = documentNo(r);
         return new ReassignmentDetailResponse(r.getReportId(), r.getDowntimeId(), f.lineId(), r.getLossQty(), details, documentNo,
                 f.equipmentId(), f.code(), f.detail(), Kst.of(f.start()), Kst.of(r.getCreatedAt()), createdBy, r.getKind(),
                 Kst.of(r.getBaseAt()), remainingSec, r.getCtSec() == null ? null : r.getCtSec().doubleValue(),
@@ -232,7 +376,8 @@ public class ReplanService {
 
     // ── 조회 도우미 ──
 
-    private Fault fault(long downtimeId) {
+    private Fault fault(Long downtimeId) {
+        if (downtimeId == null) throw invalid("고장 건이 없는 보고서입니다");
         List<Fault> found = jdbc.query("SELECT d.downtime_id, d.equipment_id, e.equipment_name, e.process_id, e.line_id, d.status, d.code,"
                         + " c.code_name, d.detail, d.started_at"
                         + " FROM downtime_event d JOIN equipment e ON e.equipment_id = d.equipment_id"

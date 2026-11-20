@@ -19,7 +19,7 @@ public final class PlanningDtos {
     public record PlanRequest(String lineId, Integer planQty) {}
 
     /** R-01. code는 고장 사유 코드(downtime_event.code). approved = 공장장 승인(결재) 여부 (11/20) */
-    public record ReassignmentReportResponse(long reportId, long downtimeId, String sourceLineId, String equipmentId, long stopMin,
+    public record ReassignmentReportResponse(long reportId, Long downtimeId, String sourceLineId, String equipmentId, long stopMin,
                                              int lossQty, OffsetDateTime createdAt, String code, boolean approved) {}
 
     /**
@@ -27,7 +27,7 @@ public final class PlanningDtos {
      * kind = line(라인 안 설비 → 라인 전체 정지) · paint(도장 1대 → 다른 1대) · vision(대체 없음).
      * remainingSec = 기준 시각(baseAt)부터 자정까지, lossQty = 부족 수량, unmetQty = 나눠도 남는 목표 미달 예상
      */
-    public record ReassignmentDetailResponse(long reportId, long downtimeId, String sourceLineId, int lossQty, List<Target> details,
+    public record ReassignmentDetailResponse(long reportId, Long downtimeId, String sourceLineId, int lossQty, List<Target> details,
                                              @Schema(description = "표시용 문서번호 AI-RPT-yyyyMMdd-보고서번호") String documentNo,
                                              String equipmentId, String code, String detail, OffsetDateTime startedAt,
                                              OffsetDateTime createdAt, String createdBy, String kind, OffsetDateTime baseAt,
@@ -48,7 +48,8 @@ public final class PlanningDtos {
     }
 
     /** R-03 계획수정(AI) 보고서 만들기. 누를 때마다 새 보고서. additionalRequest 예: "A라인은 제외하고 납기 우선" */
-    public record ReassignmentCreateRequest(Long downtimeId, String additionalRequest) {}
+    /** R-03. basis = "target"이면 고장 건 없이 오늘 생산 목표 기준 보고서 (11/20, 목표 변동). 그 밖은 downtimeId 필요 */
+    public record ReassignmentCreateRequest(Long downtimeId, String additionalRequest, String basis) {}
 
     /** S-01. equipmentIds는 그 라인의 설비 6대(슬리팅 1·프레스 4·용접 1) */
     public record PlannedStopResponse(long stopId, String lineId, List<String> equipmentIds, String reasonCode,

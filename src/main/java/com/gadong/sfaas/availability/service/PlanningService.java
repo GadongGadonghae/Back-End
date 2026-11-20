@@ -37,9 +37,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class PlanningService {
 
+    // 목표 변경 보고서(kind = target)는 고장 건이 없어서 LEFT JOIN (11/20)
     private static final String REPORT_FROM = " FROM reassignment_report r"
-            + " JOIN downtime_event d ON d.downtime_id = r.downtime_id"
-            + " JOIN equipment e ON e.equipment_id = d.equipment_id";
+            + " LEFT JOIN downtime_event d ON d.downtime_id = r.downtime_id"
+            + " LEFT JOIN equipment e ON e.equipment_id = d.equipment_id";
 
     private final NamedParameterJdbcTemplate jdbc;
     private final MasterService masterService;
@@ -114,12 +115,14 @@ public class PlanningService {
         String where = REPORT_FROM + " WHERE r.created_at >= :from AND r.created_at < :to";
         long total = jdbc.queryForObject("SELECT COUNT(*)" + where, p, Long.class);
         List<ReassignmentReportResponse> content = jdbc.query(
-                "SELECT r.report_id, r.downtime_id, e.line_id, d.equipment_id, d.started_at, d.ended_at, r.loss_qty, r.created_at, d.code, r.approved" + where
+                "SELECT r.report_id, r.downtime_id, e.line_id, d.equipment_id, d.started_at, d.ended_at, r.loss_qty, r.created_at, d.code, r.approved, UPPER(r.kind) AS kind" + where
                         + " ORDER BY r.created_at DESC, r.report_id DESC LIMIT :limit OFFSET :offset", Sql.paging(p, page, size),
-                (rs, n) -> new ReassignmentReportResponse(rs.getLong("report_id"), rs.getLong("downtime_id"), rs.getString("line_id"),
+                (rs, n) -> new ReassignmentReportResponse(rs.getLong("report_id"), rs.getObject("downtime_id", Long.class), rs.getString("line_id"),
                         rs.getString("equipment_id"),
-                        Kst.minutes(rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class)),
-                        rs.getInt("loss_qty"), Kst.of(rs.getObject("created_at", LocalDateTime.class)), rs.getString("code"),
+                        rs.getObject("started_at") == null ? 0   // 목표 변경 보고서는 고장 구간이 없어요
+                                : Kst.minutes(rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class)),
+                        rs.getInt("loss_qty"), Kst.of(rs.getObject("created_at", LocalDateTime.class)),
+                        rs.getString("code") != null ? rs.getString("code") : "TARGET".equals(rs.getString("kind")) ? "TARGET" : null,
                         rs.getBoolean("approved")));
         return new PageResponse<>(content, total, page, size);
     }

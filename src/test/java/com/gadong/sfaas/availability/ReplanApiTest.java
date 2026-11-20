@@ -134,6 +134,68 @@ class ReplanApiTest {
     }
 
     @Test
+    void r04ApproveAppliesLinePlan() throws Exception {
+        // 11/20: 승인하면 재배정 표대로 라인 목표를 바꿔요. A라인(고장) 남은 계획 98개 → B·C에 49개씩, A는 실적(2) 아래로 안 내림
+        jdbc.update("insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_MANAGER')");
+        String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}"))
+                .andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "select line_id || ':' || target_qty from production_target where target_date = '2026-11-10' order by line_id", String.class))
+                .containsExactly("A:2", "B:149", "C:149");
+        // 다시 승인해도 두 번 적용하지 않아요
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select target_qty from production_target where target_date = '2026-11-10' and line_id = 'B'", Integer.class)).isEqualTo(149);
+    }
+
+    @Test
+    void r04ApprovePaintReport_switchesPaintRoute() throws Exception {
+        // 도장 1호기 고장 보고서 승인 → PT1을 쓰던 A·B라인이 PT2로 (M-09와 같은 경로 전환 + 이력)
+        String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":12}"))
+                .andExpect(jsonPath("$.kind").value("paint")).andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "select line_id || ':' || current_paint_id from line order by line_id", String.class)).containsExactly("A:PT2", "B:PT2", "C:PT2");
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject("select count(*) from paint_route_history", Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void r03TargetReport_movesStoppedLinePlanToRunningLines() throws Exception {
+        // 11/20 목표 변동 보고서: 고장 건 없이 오늘 목표 기준. C라인 계획정지(S) → C 남은 계획 100개를 A·B에 나눠요. 승인하면 적용
+        String today = java.time.LocalDate.now(com.gadong.sfaas.global.util.Kst.ZONE).toString();
+        jdbc.batchUpdate(
+                "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values ('C-PR1','C라인 프레스 1호기','PRESS','C',1,true)",
+                "insert into downtime_code(code, code_name, is_planned) values ('PL_PM','예방보전',true)",
+                "insert into downtime_event(downtime_id, equipment_id, status, code, started_at) values (20,'C-PR1','S','PL_PM','" + today + " 00:00:01')",
+                "insert into production_target(target_date, line_id, target_qty, created_at) values "
+                        + "('" + today + "','A',100,'" + today + " 00:00:00'), ('" + today + "','B',100,'" + today + " 00:00:00'), "
+                        + "('" + today + "','C',100,'" + today + " 00:00:00')",
+                "insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_MANAGER')");
+        String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"basis\":\"target\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.kind").value("target"))
+                .andExpect(jsonPath("$.downtimeId").isEmpty())
+                .andExpect(jsonPath("$.code").value("TARGET"))
+                .andExpect(jsonPath("$.stoppedPlan").value(100))
+                .andExpect(jsonPath("$.targetQty").value(300))
+                .andExpect(jsonPath("$.details.length()").value(2))
+                .andExpect(jsonPath("$.details[0].addQty").value(50))
+                .andExpect(jsonPath("$.details[1].addQty").value(50))
+                .andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+        mvc.perform(get("/api/reassignments").param("from", today).param("to", today))
+                .andExpect(jsonPath("$.items[0].code").value("TARGET"))
+                .andExpect(jsonPath("$.items[0].approved").value(false));
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isOk());
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
+                "select line_id || ':' || target_qty from production_target where target_date = '" + today + "' order by line_id", String.class))
+                .containsExactly("A:150", "B:150", "C:0");
+    }
+
+    @Test
     void r03AdditionalRequest_excludesLine_andMakesNewReportEachTime() throws Exception {
         // C라인 제외 → 부족 98개를 B가 다 받음 (B 남은 능력 2442). 같은 고장 건이어도 누를 때마다 새 보고서
         String first = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}"))
