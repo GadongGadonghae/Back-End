@@ -136,7 +136,9 @@ public class AvailabilityService {
         if (inProgress != null) where.append(inProgress ? " AND d.ended_at IS NULL" : " AND d.ended_at IS NOT NULL");
 
         // shortcut: minMinutes 필터와 페이지 나누기를 메모리에서 해요. 기간 안 비가동이 수만 건을 넘으면 SQL로 옮겨요
-        List<Stop> stops = stops(where, p).stream().filter(s -> s.minutes() >= minMinutes).toList();
+        // 진행 중인 고장(D)은 1분이 안 돼도 바로 보여요 (알람 이력에 발생 즉시 "진행 중"으로, 11/19). 짧은 대기(I) 깜빡임은 그대로 걸러요
+        List<Stop> stops = stops(where, p).stream()
+                .filter(s -> s.minutes() >= minMinutes || (s.end() == null && "D".equals(s.status()))).toList();
         List<DowntimeEventResponse> content = stops.stream().skip((long) (page - 1) * size).limit(size)
                 .map(AvailabilityService::toResponse)
                 .toList();

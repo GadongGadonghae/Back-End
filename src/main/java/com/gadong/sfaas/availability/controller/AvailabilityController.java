@@ -92,7 +92,7 @@ public class AvailabilityController {
         return service.downtimeSummary(from, to, groupBy);
     }
 
-    @Operation(summary = "U-08 알람·비가동 이력 목록 (조회 조건 + 조치 담당자)", description = "P1. minMinutes=1 이면 1분 이상 정지만 1건으로 세요. 조치 담당자는 번호(actionUserId)로 거르고, 응답에 이름(actionUserName)을 붙여요.")
+    @Operation(summary = "U-08 알람·비가동 이력 목록 (조회 조건 + 조치 담당자)", description = "P1. minMinutes=1 이면 1분 이상 정지만 1건으로 세요 (진행 중인 고장 D는 1분 미만이어도 포함). 조치 담당자는 번호(actionUserId)로 거르고, 응답에 이름(actionUserName)을 붙여요.")
     @GetMapping("/downtime/events")
     public PageResponse<DowntimeEventResponse> downtimeEvents(
             @RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,

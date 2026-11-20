@@ -240,7 +240,9 @@ public class AiReportService {
                     .retrieve()
                     .body(String.class);
             JsonNode content = objectMapper.readTree(raw).path("choices").path(0).path("message").path("content");
-            Draft draft = objectMapper.readValue(content.asText(), Draft.class);
+            // 모델에 따라 JSON을 ```json ... ``` 으로 감싸 보내는 경우가 있어 벗겨 내요 (Gemini 등)
+            String json = content.asText().trim().replaceAll("(?s)^```(?:json)?\\s*(.*?)\\s*```$", "$1");
+            Draft draft = objectMapper.readValue(json, Draft.class);
             if (isBlank(draft.title()) || isBlank(draft.summary()) || draft.actions() == null || draft.risks() == null) {
                 throw new LlmUnavailableException("LLM 응답 형식이 올바르지 않습니다", null);
             }

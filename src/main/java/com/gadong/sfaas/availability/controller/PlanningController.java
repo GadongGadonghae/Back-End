@@ -2,6 +2,7 @@ package com.gadong.sfaas.availability.controller;
 
 import com.gadong.sfaas.availability.dto.PlanningDtos.*;
 import com.gadong.sfaas.availability.service.PlanningService;
+import com.gadong.sfaas.availability.service.ReplanService;
 import com.gadong.sfaas.global.response.PageResponse;
 import com.gadong.sfaas.monitoring.service.ProductTraceService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,10 +31,12 @@ public class PlanningController {
 
     private final PlanningService service;
     private final ProductTraceService productTrace;
+    private final ReplanService replanService;
 
-    public PlanningController(PlanningService service, ProductTraceService productTrace) {
+    public PlanningController(PlanningService service, ProductTraceService productTrace, ReplanService replanService) {
         this.service = service;
         this.productTrace = productTrace;
+        this.replanService = replanService;
     }
 
     @Operation(summary = "G-01 생산량 조회 (기간별·라인별·계획 대비)",
@@ -64,7 +67,7 @@ public class PlanningController {
         return service.setPlan(date, request);
     }
 
-    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. 보고서는 Spring Boot가 자동으로 만들고 승인은 없어요.")
+    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. code = 고장 사유 코드. 보고서는 R-03으로 만들고 승인은 없어요.")
     @GetMapping("/reassignments")
     public PageResponse<ReassignmentReportResponse> reports(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                             @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
@@ -73,10 +76,23 @@ public class PlanningController {
         return service.reports(from, to, page, size);
     }
 
-    @Operation(summary = "R-02 재배정 보고서 상세 (라인별 추가 배정)", description = "P1. reassignment_detail 조회")
+    @Operation(summary = "R-02 재배정(계획수정) 보고서 상세",
+            description = "P1. 라인별 추가 배정(details) + 계산 기준(kind·baseAt·remainingSec·ctSec·stoppedPlan·stoppedDone·targetQty·unmetQty) + AI 문장(ai). "
+                    + "kind = line(라인 전체 정지로 봄) · paint(다른 도장 1대가 맡음) · vision(대체 없음). 도장 보고서의 targetLineId는 설비 ID(PT1·PT2)예요.")
     @GetMapping("/reassignments/{reportId}")
     public ReassignmentDetailResponse report(@PathVariable long reportId) {
-        return service.report(reportId);
+        return replanService.report(reportId);
+    }
+
+    @Operation(summary = "R-03 AI 계획수정 보고서 만들기 (고장 건으로)",
+            description = "고장(D) downtimeId로 부족 수량·다른 라인(도장) 추가 배정·AI 문장을 계산해 저장하고 R-02 모양으로 줘요. "
+                    + "오늘 고장이면 지금 기준, 지난 날이면 고장 시작 기준. 누를 때마다 새 보고서예요. "
+                    + "additionalRequest(선택, 500자): \"A라인은 제외\", \"F라인 정지\", \"납기 우선\" 등 → 제외·정지 라인은 배정에서 빠지고 해석 결과는 ai.requestInterpretation. "
+                    + "AI 문장은 키가 없거나 실패하면 템플릿(ai.mock=true, ai.fallbackReason). 계획은 제안만 하고 바꾸지 않아요.")
+    @PostMapping("/reassignments")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ReassignmentDetailResponse createReport(@RequestBody ReassignmentCreateRequest request) {
+        return replanService.create(request == null ? null : request.downtimeId(), request == null ? null : request.additionalRequest());
     }
 
     @Operation(summary = "S-01 계획정지 조회 (진행 중 + 이력)",

@@ -4,10 +4,7 @@ import static com.gadong.sfaas.global.util.Checks.invalid;
 
 import com.gadong.sfaas.availability.dto.PlanningDtos.*;
 import com.gadong.sfaas.availability.entity.ProductionTarget;
-import com.gadong.sfaas.availability.entity.ReassignmentReport;
 import com.gadong.sfaas.availability.repository.ProductionTargetRepository;
-import com.gadong.sfaas.availability.repository.ReassignmentDetailRepository;
-import com.gadong.sfaas.availability.repository.ReassignmentReportRepository;
 import com.gadong.sfaas.global.exception.BusinessException;
 import com.gadong.sfaas.global.exception.ErrorCode;
 import com.gadong.sfaas.global.response.PageResponse;
@@ -48,19 +45,14 @@ public class PlanningService {
     private final DowntimeCodeRepository downtimeCodeRepository;
     private final ProductionStats productionStats;
     private final ProductionTargetRepository targetRepository;
-    private final ReassignmentReportRepository reportRepository;
-    private final ReassignmentDetailRepository detailRepository;
 
     public PlanningService(NamedParameterJdbcTemplate jdbc, MasterService masterService, DowntimeCodeRepository downtimeCodeRepository, ProductionStats productionStats,
-                           ProductionTargetRepository targetRepository, ReassignmentReportRepository reportRepository,
-                           ReassignmentDetailRepository detailRepository) {
+                           ProductionTargetRepository targetRepository) {
         this.jdbc = jdbc;
         this.masterService = masterService;
         this.downtimeCodeRepository = downtimeCodeRepository;
         this.productionStats = productionStats;
         this.targetRepository = targetRepository;
-        this.reportRepository = reportRepository;
-        this.detailRepository = detailRepository;
     }
 
     /** G-01. 실적 = 출고 양품 수(검사 OK, 대시보드 M-07 ok와 같음, 11/18 변경. 예전엔 검사 수 + 공정 불량 수). 계획이나 실적이 있는 (구간, 라인)마다 한 줄이에요 */
@@ -111,7 +103,7 @@ public class PlanningService {
         return plan(target);
     }
 
-    /** R-01: 생성 시각(created_at) 기준 기간 조회, 최신순. 보고서는 Spring Boot가 자동으로 만들어요(승인 없음) */
+    /** R-01: 생성 시각(created_at) 기준 기간 조회, 최신순. 보고서는 고장(D) 건에서 R-03으로 만들어요(승인 없음). R-02·R-03은 ReplanService */
     public PageResponse<ReassignmentReportResponse> reports(LocalDate from, LocalDate to, int page, int size) {
         Checks.period(from, to);
         Checks.page(page, size);
@@ -119,24 +111,13 @@ public class PlanningService {
         String where = REPORT_FROM + " WHERE r.created_at >= :from AND r.created_at < :to";
         long total = jdbc.queryForObject("SELECT COUNT(*)" + where, p, Long.class);
         List<ReassignmentReportResponse> content = jdbc.query(
-                "SELECT r.report_id, r.downtime_id, e.line_id, d.equipment_id, d.started_at, d.ended_at, r.loss_qty, r.created_at" + where
+                "SELECT r.report_id, r.downtime_id, e.line_id, d.equipment_id, d.started_at, d.ended_at, r.loss_qty, r.created_at, d.code" + where
                         + " ORDER BY r.created_at DESC, r.report_id DESC LIMIT :limit OFFSET :offset", Sql.paging(p, page, size),
                 (rs, n) -> new ReassignmentReportResponse(rs.getLong("report_id"), rs.getLong("downtime_id"), rs.getString("line_id"),
                         rs.getString("equipment_id"),
                         Kst.minutes(rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class)),
-                        rs.getInt("loss_qty"), Kst.of(rs.getObject("created_at", LocalDateTime.class))));
+                        rs.getInt("loss_qty"), Kst.of(rs.getObject("created_at", LocalDateTime.class)), rs.getString("code")));
         return new PageResponse<>(content, total, page, size);
-    }
-
-    /** R-02 */
-    public ReassignmentDetailResponse report(long reportId) {
-        ReassignmentReport report = findReport(reportId);
-        String sourceLineId = jdbc.queryForObject(
-                "SELECT e.line_id FROM downtime_event d JOIN equipment e ON e.equipment_id = d.equipment_id WHERE d.downtime_id = :id",
-                Map.of("id", report.getDowntimeId()), String.class);
-        List<ReassignmentDetailResponse.Target> details = detailRepository.findByReportIdOrderByLineIdAsc(reportId).stream()
-                .map(d -> new ReassignmentDetailResponse.Target(d.getLineId(), d.getSpareCapacity(), d.getAddedQty())).toList();
-        return new ReassignmentDetailResponse(reportId, report.getDowntimeId(), sourceLineId, report.getLossQty(), details);
     }
 
     /** S-01. 라인 정지 1건(stop_group_id)을 stopId 하나로 묶고, 그 라인의 설비를 equipmentIds로 줘요 */
@@ -200,11 +181,6 @@ public class PlanningService {
         if (end.isBefore(start)) throw invalid("endAt은 시작 시각보다 빠를 수 없습니다");
         jdbc.update("UPDATE downtime_event SET ended_at = :end WHERE stop_group_id = :id AND ended_at IS NULL", Map.of("end", end, "id", stopId));
         return new PlannedStopEndResponse(stopId, Kst.of(end), Kst.minutes(start, end));
-    }
-
-    private ReassignmentReport findReport(long reportId) {
-        return reportRepository.findById(reportId).orElseThrow(() ->
-                new BusinessException(ErrorCode.REASSIGNMENT_NOT_FOUND, "재배정 보고서 " + reportId + "를 찾을 수 없습니다"));
     }
 
     /** G-01 묶음 키: "구간|라인" */

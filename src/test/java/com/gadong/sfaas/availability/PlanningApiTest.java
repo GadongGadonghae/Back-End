@@ -78,13 +78,16 @@ class PlanningApiTest {
                 .andExpect(jsonPath("$.items[0].equipmentId").value("A-PR1"))
                 .andExpect(jsonPath("$.items[0].stopMin").value(42))
                 .andExpect(jsonPath("$.items[0].lossQty").value(126))
-                .andExpect(jsonPath("$.items[0].createdAt").value("2026-11-10T09:55:00+09:00"));
+                .andExpect(jsonPath("$.items[0].createdAt").value("2026-11-10T09:55:00+09:00"))
+                .andExpect(jsonPath("$.items[0].code").value("UP_BREAKDOWN"));
         mvc.perform(get("/api/reassignments/12"))
                 .andExpect(jsonPath("$.downtimeId").value(10))
                 .andExpect(jsonPath("$.sourceLineId").value("A"))
                 .andExpect(jsonPath("$.details[0].targetLineId").value("B"))
                 .andExpect(jsonPath("$.details[0].spareCapacity").value(300))
-                .andExpect(jsonPath("$.details[0].addQty").value(126));
+                .andExpect(jsonPath("$.details[0].addQty").value(126))
+                .andExpect(jsonPath("$.equipmentId").value("A-PR1"))
+                .andExpect(jsonPath("$.code").value("UP_BREAKDOWN"));
         mvc.perform(get("/api/reassignments/999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("REASSIGNMENT_NOT_FOUND"));
