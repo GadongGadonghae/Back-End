@@ -24,7 +24,7 @@ public class UserController {
     }
 
     // C-02: 사용자 목록 조회 (사용자 관리 = 공장장만, 11/20)
-    @PreAuthorize("hasRole('PLANT_MANAGER')")
+    @PreAuthorize("hasRole('PLANT_HEAD')")
     @GetMapping
     public ResponseEntity<List<UserResponse>> getUsers(
         @RequestParam(defaultValue = "0") int page,
@@ -34,7 +34,7 @@ public class UserController {
     }
 
     // C-03: 사용자 등록 (공장장만)
-    @PreAuthorize("hasRole('PLANT_MANAGER')")
+    @PreAuthorize("hasRole('PLANT_HEAD')")
     @PostMapping
     public ResponseEntity<Map<String, String>> createUser(
         @Valid @RequestBody UserCreateRequest request

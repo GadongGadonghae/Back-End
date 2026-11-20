@@ -34,7 +34,7 @@ class UserApiTest {
             "testadmin",
             encoder.encode("admin1234"),
             "테스트관리자",
-            "PLANT_MANAGER"
+            "PLANT_HEAD"
         );
 
         String response = mvc.perform(post("/api/auth/login")
@@ -77,7 +77,7 @@ class UserApiTest {
                       "loginId": "worker01",
                       "password": "worker1234",
                       "userName": "작업자1",
-                      "role": "PRODUCTION_MANAGER",
+                      "role": "PROD_LEAD",
                       "email": "worker@sfaas.local",
                       "memo": "테스트 계정"
                     }
@@ -114,7 +114,7 @@ class UserApiTest {
                       "loginId": "testadmin",
                       "password": "another1234",
                       "userName": "중복사용자",
-                      "role": "PRODUCTION_MANAGER"
+                      "role": "PROD_LEAD"
                     }
                     """))
             .andExpect(status().isConflict())
@@ -122,7 +122,7 @@ class UserApiTest {
     }
 
     @Test
-    @org.springframework.security.test.context.support.WithMockUser(username = "pm", roles = "PRODUCTION_MANAGER")
+    @org.springframework.security.test.context.support.WithMockUser(username = "pm", roles = "PROD_LEAD")
     void onlyPlantManagerManagesUsers() throws Exception {
         // 11/20 계정 권한: 사용자 관리는 공장장만 → 생산관리팀장은 403
         mvc.perform(get("/api/users")).andExpect(status().isForbidden());

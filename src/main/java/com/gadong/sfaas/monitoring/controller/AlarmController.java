@@ -59,7 +59,7 @@ public class AlarmController {
     }
 
     @Operation(summary = "M-11 알람 기준치 수정", description = "P1")
-    @PreAuthorize("hasRole('PRODUCTION_MANAGER')") // 관리값 기준 설정 = 생산관리팀장만 (11/20)
+    @PreAuthorize("hasRole('PROD_LEAD')") // 관리값 기준 설정 = 생산관리팀장만 (11/20)
     @PutMapping("/thresholds/{id}")
     public ThresholdUpdateResponse updateThreshold(@PathVariable int id, @RequestBody ThresholdUpdateRequest request) {
         return service.updateThreshold(id, request);

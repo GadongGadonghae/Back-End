@@ -24,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 목표 A·B·C 100개씩, 12시 전 양품 A 2 · B 1 · C 0 → 부족 98, 남은 능력 B 2541−99=2442 · C 2541−100=2441 → B 49 · C 49
  */
 @SpringBootTest
-@WithMockUser(username = "u1", roles = "PRODUCTION_MANAGER")
+@WithMockUser(username = "u1", roles = "PROD_LEAD")
 @AutoConfigureMockMvc
 @Transactional
 class ReplanApiTest {
@@ -110,14 +110,14 @@ class ReplanApiTest {
     @Test
     void r04PlantManagerApproves_othersForbidden() throws Exception {
         // 11/20 계정 권한: 작성은 생산관리팀장(이 클래스 기본), 승인(결재)은 공장장만
-        jdbc.update("insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_MANAGER')");
+        jdbc.update("insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_HEAD')");
         String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.approved").value(false))
                 .andReturn().getResponse().getContentAsString();
         String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
         mvc.perform(post("/api/reassignments/" + id + "/approve")).andExpect(status().isForbidden());   // 생산관리팀장은 승인 못 함
-        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER")))
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_HEAD")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.approved").value(true))
                 .andExpect(jsonPath("$.approvedBy").value("박공장"))
@@ -126,28 +126,28 @@ class ReplanApiTest {
                 .andExpect(jsonPath("$.items[0].approved").value(true));
         // 공장장·라인 담당자는 보고서를 만들 수 없어요
         mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}")
-                        .with(user("boss").roles("PLANT_MANAGER")))
+                        .with(user("boss").roles("PLANT_HEAD")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
         mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}")
-                        .with(user("line").roles("LINE_MANAGER")))
+                        .with(user("line").roles("LINE_WORKER")))
                 .andExpect(status().isForbidden());
-        mvc.perform(post("/api/reassignments/999/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isNotFound());
+        mvc.perform(post("/api/reassignments/999/approve").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isNotFound());
     }
 
     @Test
     void r04ApproveAppliesLinePlan() throws Exception {
         // 11/20: 승인하면 재배정 표대로 라인 목표를 바꿔요. A라인(고장) 남은 계획 98개 → B·C에 49개씩, A는 실적(2) 아래로 안 내림
-        jdbc.update("insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_MANAGER')");
+        jdbc.update("insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_HEAD')");
         String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}"))
                 .andReturn().getResponse().getContentAsString();
         String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
-        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isOk());
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
                 "select line_id || ':' || target_qty from production_target where target_date = '2026-11-10' order by line_id", String.class))
                 .containsExactly("A:2", "B:149", "C:149");
         // 다시 승인해도 두 번 적용하지 않아요
-        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isOk());
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
                 "select target_qty from production_target where target_date = '2026-11-10' and line_id = 'B'", Integer.class)).isEqualTo(149);
     }
@@ -158,7 +158,7 @@ class ReplanApiTest {
         String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":12}"))
                 .andExpect(jsonPath("$.kind").value("paint")).andReturn().getResponse().getContentAsString();
         String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
-        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isOk());
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
                 "select line_id || ':' || current_paint_id from line order by line_id", String.class)).containsExactly("A:PT2", "B:PT2", "C:PT2");
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject("select count(*) from paint_route_history", Integer.class)).isEqualTo(2);
@@ -175,7 +175,7 @@ class ReplanApiTest {
                 "insert into production_target(target_date, line_id, target_qty, created_at) values "
                         + "('" + today + "','A',100,'" + today + " 00:00:00'), ('" + today + "','B',100,'" + today + " 00:00:00'), "
                         + "('" + today + "','C',100,'" + today + " 00:00:00')",
-                "insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_MANAGER')");
+                "insert into users(user_id, login_id, password_hash, user_name, role) values (2,'boss','x','박공장','PLANT_HEAD')");
         String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"basis\":\"target\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.kind").value("target"))
@@ -191,7 +191,7 @@ class ReplanApiTest {
         mvc.perform(get("/api/reassignments").param("from", today).param("to", today))
                 .andExpect(jsonPath("$.items[0].code").value("TARGET"))
                 .andExpect(jsonPath("$.items[0].approved").value(false));
-        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_MANAGER"))).andExpect(status().isOk());
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForList(
                 "select line_id || ':' || target_qty from production_target where target_date = '" + today + "' order by line_id", String.class))
                 .containsExactly("A:150", "B:150", "C:0");
@@ -333,9 +333,9 @@ class ReplanApiTest {
         String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
 
         // 고장 보고서와 같은 R-04 승인으로는 안 되고, 승인·적용(R-06)은 공장장만
-        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("u1").roles("PLANT_MANAGER"))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("u1").roles("PLANT_HEAD"))).andExpect(status().isBadRequest());
         mvc.perform(post("/api/reassignments/" + id + "/apply")).andExpect(status().isForbidden());
-        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("u1").roles("PLANT_MANAGER")))
+        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("u1").roles("PLANT_HEAD")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.startedLines[0]").value("C"))
                 .andExpect(jsonPath("$.endedStops[0]").value(77))
@@ -348,7 +348,7 @@ class ReplanApiTest {
                 "select sum(target_qty) from production_target where target_date = '" + today + "'", Integer.class)).isEqualTo(500);
         mvc.perform(get("/api/reassignments/" + id)).andExpect(jsonPath("$.approved").value(true))
                 .andExpect(jsonPath("$.approvedAt").exists()).andExpect(jsonPath("$.approvedBy").value("김관리"));
-        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("u1").roles("PLANT_MANAGER"))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("u1").roles("PLANT_HEAD"))).andExpect(status().isBadRequest());
     }
 
     @Test

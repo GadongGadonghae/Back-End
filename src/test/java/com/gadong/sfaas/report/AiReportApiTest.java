@@ -16,7 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /** AI 계획수정 보고서 생성 API (POST /api/ai-reports/generate). 기본 설정은 시연 모드(mock)라 외부 LLM을 부르지 않아요. */
 @SpringBootTest
-@WithMockUser(username = "testuser", roles = "PRODUCTION_MANAGER") // API는 로그인 필요 (SecurityConfig)
+@WithMockUser(username = "testuser", roles = "PROD_LEAD") // API는 로그인 필요 (SecurityConfig)
 @AutoConfigureMockMvc
 class AiReportApiTest {
 

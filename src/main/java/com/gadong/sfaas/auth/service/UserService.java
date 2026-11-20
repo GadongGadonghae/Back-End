@@ -58,7 +58,7 @@ public class UserService {
             );
         }
 
-        // 1-1. 권한은 공장장·생산관리팀장·라인 담당자 중 하나 (11/20, auth.Roles)
+        // 1-1. 권한은 공장장·생산관리팀장·라인 담당자·캠퍼스장 중 하나 (11/20, auth.Roles)
         if (!com.gadong.sfaas.auth.Roles.ALL.contains(request.role())) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST,
                 "role은 " + String.join(", ", com.gadong.sfaas.auth.Roles.ALL) + " 중 하나입니다");
@@ -76,6 +76,9 @@ public class UserService {
             request.email(),
             request.memo()
         );
+        if (request.lines() != null) {
+            user.assignLines(request.lines().stream().map(x -> x.trim().toUpperCase()).filter(x -> !x.isEmpty()).distinct().toList());
+        }
 
         // 4. DB 저장
         userRepository.save(user);

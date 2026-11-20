@@ -13,6 +13,9 @@ public enum ErrorCode {
     ALARM_NOT_FOUND(HttpStatus.NOT_FOUND, "알람을 찾을 수 없습니다"),
     DOWNTIME_NOT_FOUND(HttpStatus.NOT_FOUND, "비가동 이력을 찾을 수 없습니다"),
     REASSIGNMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "재배정 보고서를 찾을 수 없습니다"),
+    REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "보고서를 찾을 수 없습니다"),
+    // 보고서 결재·전송 상태가 맞지 않음 (예: 결재 전 전송, 전송 뒤 다시 작성) (v0.3.15)
+    REPORT_STATE_CONFLICT(HttpStatus.CONFLICT, "보고서 상태가 맞지 않습니다"),
     PLANNED_STOP_NOT_FOUND(HttpStatus.NOT_FOUND, "계획정지를 찾을 수 없습니다"),
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "제품을 찾을 수 없습니다"),
     PLANNED_STOP_CONFLICT(HttpStatus.CONFLICT, "이미 진행 중인 계획정지가 있습니다"),

@@ -68,14 +68,17 @@ public class AvailabilityService {
     private final UserLookup users;
     private final DowntimeRepository downtimeRepository;
     private final DowntimeCodeRepository downtimeCodeRepository;
+    private final com.gadong.sfaas.auth.service.CurrentUser currentUser;
 
     public AvailabilityService(NamedParameterJdbcTemplate jdbc, MasterService masterService, UserLookup users,
-                               DowntimeRepository downtimeRepository, DowntimeCodeRepository downtimeCodeRepository) {
+                               DowntimeRepository downtimeRepository, DowntimeCodeRepository downtimeCodeRepository,
+                               com.gadong.sfaas.auth.service.CurrentUser currentUser) {
         this.jdbc = jdbc;
         this.masterService = masterService;
         this.users = users;
         this.downtimeRepository = downtimeRepository;
         this.downtimeCodeRepository = downtimeCodeRepository;
+        this.currentUser = currentUser;
     }
 
     /**
@@ -217,6 +220,7 @@ public class AvailabilityService {
         if (eventId < 0) throw invalid("통신 끊김 기록에는 사유·메모를 저장할 수 없습니다");   // U-08의 DC 항목 (eventId = −상태 이력 번호)
         Downtime downtime = downtimeRepository.findById(eventId).orElseThrow(() ->
                 new BusinessException(ErrorCode.DOWNTIME_NOT_FOUND, "비가동 이력 " + eventId + "를 찾을 수 없습니다"));
+        requireOwnLine(downtime.getEquipmentId());
         if (request.reasonCode() != null && !downtimeCodeRepository.existsById(request.reasonCode())) {
             throw invalid("비가동 사유 코드 " + request.reasonCode() + "가 없습니다");
         }
@@ -230,6 +234,16 @@ public class AvailabilityService {
                 .addValue("from", LocalDateTime.of(1970, 1, 1, 0, 0)).addValue("to", LocalDateTime.of(9999, 12, 31, 0, 0));
         return stops(new StringBuilder(" AND d.downtime_id = :id"), p).stream().findFirst().map(AvailabilityService::toResponse)
                 .orElseThrow(() -> new BusinessException(ErrorCode.DOWNTIME_NOT_FOUND, "비가동 이력 " + eventId + "를 찾을 수 없습니다"));
+    }
+
+    /** 라인 담당자(LINE_WORKER)는 담당 라인 설비만 조치를 쓸 수 있어요 (v0.3.15). 공용 설비(도장·검사)는 라인이 없어 못 써요 */
+    private void requireOwnLine(String equipmentId) {
+        currentUser.get().filter(u -> com.gadong.sfaas.auth.Roles.LINE.equals(u.getRole())).ifPresent(u -> {
+            String line = masterService.equipment(equipmentId).getLineId();
+            if (line == null || !u.lineList().contains(line)) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "담당 라인(" + String.join(",", u.lineList()) + ")의 설비만 조치를 쓸 수 있습니다");
+            }
+        });
     }
 
     /** U-10: 장비고장(UP_BREAKDOWN) 중 minMinutes 이상인 구간을 설비별로 합쳐 긴 순으로 */

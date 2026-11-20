@@ -19,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** 비가동(U-07~U-10)과 상태 타임라인(U-12)을 H2 데이터로 확인해요. */
 @SpringBootTest
-@WithMockUser(username = "testuser", roles = "LINE_MANAGER") // API는 로그인 필요 (SecurityConfig)
+@WithMockUser(username = "testuser", roles = "LINE_WORKER") // API는 로그인 필요 (SecurityConfig)
 @AutoConfigureMockMvc
 @Transactional
 class AvailabilityApiTest {

@@ -24,6 +24,9 @@ public record UserCreateRequest(
     String email,
 
     @Size(max = 200)
-    String memo
+    String memo,
+
+    /** 라인 담당자의 담당 라인 (예: ["A","B"]). 선택 (v0.3.15) */
+    java.util.List<String> lines
 ) {
 }
