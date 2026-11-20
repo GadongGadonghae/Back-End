@@ -44,7 +44,7 @@ public class AuthService {
         }
 
         // 3. 로그인 성공 시 마지막 로그인 시각 갱신
-        user.updateLastLoginAt(LocalDateTime.now());
+        user.updateLastLoginAt(com.gadong.sfaas.global.util.Kst.now());
 
         // 4. JWT 토큰 발급
         String accessToken = jwtTokenProvider.createToken(

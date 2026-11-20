@@ -23,6 +23,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class Report {
 
+    /** 작성 중: AI 보고서를 만들었지만 아직 결재 요청 전 (11/20). 공장장에게 알리지 않아요 */
+    public static final String DRAFT = "DRAFT";
+    /** 작성 완료 · 결재 요청 */
     public static final String WRITTEN = "WRITTEN";
     public static final String APPROVED = "APPROVED";
     public static final String SENT = "SENT";
@@ -63,6 +66,25 @@ public class Report {
         this.approvedAt = null;
         this.sentBy = null;
         this.sentAt = null;
+    }
+
+    /** 작성 중으로 기록 (AI 보고서를 새로 만들면, 다시 만들어도 결재는 처음부터) */
+    public void draft(String title, String content, Long replanReportId, Integer by, LocalDateTime at) {
+        write(title, content, replanReportId, by, at);
+        this.status = DRAFT;
+    }
+
+    /** 작성 완료 · 결재 요청 (작성 중 → 작성). content가 있으면 그 순간 문서로 바꿔요 */
+    public void request(Integer by, LocalDateTime at, String content) {
+        this.status = WRITTEN;
+        this.writtenBy = by;
+        this.writtenAt = at;
+        if (content != null) this.content = content;
+    }
+
+    /** 회수: 결재 요청을 거둬 작성 중으로 (결재 전에만) */
+    public void recall() {
+        this.status = DRAFT;
     }
 
     public void approve(Integer by, LocalDateTime at, String content) {

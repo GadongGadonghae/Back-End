@@ -2,6 +2,7 @@ package com.gadong.sfaas.report.flow;
 
 import com.gadong.sfaas.global.response.PageResponse;
 import com.gadong.sfaas.report.flow.ReportDtos.ReportCreateRequest;
+import com.gadong.sfaas.report.flow.ReportDtos.ReportRequestBody;
 import com.gadong.sfaas.report.flow.ReportDtos.ReportResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -58,6 +59,20 @@ public class ReportFlowController {
     @GetMapping("/reports/{reportId}")
     public ReportResponse get(@PathVariable long reportId) {
         return service.get(reportId);
+    }
+
+    @Operation(summary = "R-15 작성 완료 · 결재 요청 (생산관리팀장)", description = "작성 중(DRAFT)만, 아니면 409. 이때부터 공장장에게 결재 알림. body.content = 그 순간 문서(선택)")
+    @PreAuthorize("hasRole('PROD_LEAD')")
+    @PostMapping("/reports/{reportId}/request")
+    public ReportResponse request(@PathVariable long reportId, @RequestBody(required = false) ReportRequestBody body) {
+        return service.request(reportId, body == null ? null : body.content());
+    }
+
+    @Operation(summary = "R-16 회수 (생산관리팀장)", description = "결재 요청(WRITTEN)만, 아니면 409. 작성 중(DRAFT)으로 돌아가 값을 고치고 다시 결재 요청")
+    @PreAuthorize("hasRole('PROD_LEAD')")
+    @PostMapping("/reports/{reportId}/recall")
+    public ReportResponse recall(@PathVariable long reportId) {
+        return service.recall(reportId);
     }
 
     @Operation(summary = "R-13 결재 (공장장)", description = "작성(WRITTEN)만, 아니면 409. REPLAN이면 계획수정 보고서를 승인하고 현장에 적용 (R-04와 같음)")

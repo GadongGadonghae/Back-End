@@ -137,7 +137,7 @@ public class OrderRequestParser {
     private static final Pattern DUE = Pattern.compile("(\\d{1,2})\\s*시(?:\\s*(\\d{1,2})\\s*분)?\\s*(?:까지|안에|전에|납기)");
     private static final Map<String, Integer> COUNT_WORDS = Map.of("한", 1, "하나", 1, "두", 2, "둘", 2, "세", 3, "셋", 3);
 
-    static Parsed rules(String text) {
+    public static Parsed rules(String text) {
         List<String> notes = new ArrayList<>();
         Integer qty = null;
         Matcher q = QTY.matcher(text);
@@ -178,6 +178,25 @@ public class OrderRequestParser {
         if (c.find()) count = COUNT_WORDS.getOrDefault(c.group(1), c.group(1).matches("\\d") ? Integer.parseInt(c.group(1)) : null);
         if (qty == null) notes.add("추가 수량을 찾지 못했습니다 (예: 300개)");
         return new Parsed(qty, due, List.copyOf(running), List.copyOf(added), count, List.copyOf(excluded), setup, "규칙", notes);
+    }
+
+    /**
+     * 요청에서 정지하라고 한 라인 (11/21): "D라인 정지", "E라인 멈춰", "F라인은 세워", "C라인 꺼". "정지 중"·"멈춰 있는"은 빼요
+     */
+    public static List<String> stopLines(String text) {
+        if (text == null || text.isBlank()) return List.of();
+        String norm = RANGE.matcher(text).replaceAll(m -> expand(m.group(1), m.group(2)) + "라인");
+        List<java.util.regex.MatchResult> mentions = LINE_LIST.matcher(norm).results().toList();
+        Set<String> out = new LinkedHashSet<>();
+        for (int i = 0; i < mentions.size(); i++) {
+            java.util.regex.MatchResult mm = mentions.get(i);
+            String ctx = norm.substring(mm.end(), i + 1 < mentions.size() ? mentions.get(i + 1).start() : norm.length());
+            ctx = ctx.length() > 15 ? ctx.substring(0, 15) : ctx;
+            if (ctx.matches(".*(정지|멈춰|멈추|중단|세워|세우|꺼|끄).*") && !ctx.matches("^\\s*(은|는|이|가)?\\s*(이미\\s*)?(정지\\s*중|멈춰\\s*있|쉬고|정지된).*")) {
+                Pattern.compile("(?i)[A-F]").matcher(mm.group(1)).results().forEach(r -> out.add(r.group().toUpperCase()));
+            }
+        }
+        return List.copyOf(out);
     }
 
     private static String expand(String a, String b) {

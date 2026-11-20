@@ -27,10 +27,12 @@ import org.springframework.transaction.annotation.Transactional;
  * 가동률·OEE·양품률 집계 (U-01~U-06, U-11). OEE 계산은 이 클래스 한 곳({@link Acc})에서만 하고 모든 API가 같이 써요.
  *
  * <ul>
- *   <li>부하시간 = 전체(조회 구간, 오늘이면 지금까지) − S(계획정지) 시간</li>
+ *   <li>부하시간 = 전체(조회 구간, 오늘이면 지금까지) − S(계획정지) 시간. 11/21: "전체"는 그 설비의 상태 기록이 있는 시간
+ *       (공장이 꺼진 밤은 빼요. 상태 기록이 없으면 조회 구간 전체)</li>
  *   <li>시간가동률(availability) = (부하시간 − I·D 시간) ÷ 부하시간. DC(통신 끊김)는 가동으로 봐요.
  *       계획정지 안에서 난 I·D는 손실로 세지 않아요</li>
- *   <li>성능가동률(performance) = 표준 CT(process.cycle_time_sec) × 생산수량 ÷ 가동시간, 최대 100%</li>
+ *   <li>성능가동률(performance) = 표준 CT(process.cycle_time_sec) × 생산수량 ÷ 가동시간, 최대 100%.
+ *       생산수량 = 그 설비를 지나간 제품 수(product_flow, 11/21: 프레스 1~3단이 0으로 잡히던 문제)</li>
  *   <li>양품률(quality, OEE용) = 공정 OK 수 ÷ 공정 처리(판정된) 수. 공정·설비·라인 모두 같은 기준.
  *       검사 공정은 inspection_result의 OK ÷ 검사 수</li>
  *   <li>OEE = 시간가동률 × 성능가동률 × 양품률</li>
@@ -95,8 +97,9 @@ public class UtilizationService {
     }
 
     /** 기간과 겹치는 모든 설비·비가동 구간, 공정 표준 CT, 설비·일별 수량, 라인·일별 출고 양품 */
+    /** cover: 설비별 상태 기록(equipment_status_history)이 있는 구간 = 공장이 돌던 시간 (11/21) */
     private record Data(List<Eq> eqs, Map<String, List<Iv>> ivs, Map<String, Double> cycle,
-                        Map<String, Map<LocalDate, Qty>> qty, Map<String, Map<LocalDate, Long>> shipOk) {
+                        Map<String, Map<LocalDate, Qty>> qty, Map<String, Map<LocalDate, Long>> shipOk, Map<String, List<Iv>> cover) {
 
         Acc acc(Eq eq, LocalDateTime bs, LocalDateTime be) {
             Qty q = qty(eq.id(), bs, be);
@@ -132,6 +135,14 @@ public class UtilizationService {
             if (!end.isAfter(bs)) return T.ZERO;
             List<Iv> all = ivs.getOrDefault(eq.id(), List.of());
             long window = Duration.between(bs, end).getSeconds(), planned = 0, unplanned = 0;
+            // 11/21 부하시간은 상태 기록이 있는 시간만 (공장이 꺼진 밤·주말까지 "일해야 할 시간"으로 세면 성능가동률이 절반으로 떨어져요).
+            //       상태 기록이 하나도 없으면 예전처럼 조회 구간 전체
+            List<Iv> cov = cover.getOrDefault(eq.id(), List.of());
+            if (!cov.isEmpty()) {
+                long c = 0;
+                for (Iv v : cov) c += overlap(v.start(), v.end(), bs, end);
+                window = Math.min(window, c);
+            }
             int stops = 0;
             List<Iv> stopsPlanned = all.stream().filter(Iv::planned).toList();
             for (Iv s : stopsPlanned) planned += overlap(s.start(), s.end(), bs, end);
@@ -323,13 +334,29 @@ public class UtilizationService {
                         .merge(rs.getObject(2, LocalDate.class), new Qty(rs.getLong(3), rs.getLong(4), rs.getLong(5)), Qty::plus);
             });
         }
+        // 11/21 생산수량은 설비마다 제품이 실제로 지나간 기록(product_flow, 설비마다 1줄)으로 세요.
+        //   프레스는 제품 1개 = press_data 1줄이 마지막 프레스(PR4)에만 붙어서, PR1~PR3 생산수량이 0으로 잡혀 성능가동률이 20%대로 떨어졌어요.
+        //   판정 수·OK 수(양품률)는 그대로 공정 테이블 기준. product_flow가 없는 옛 기록은 공정 테이블 수를 그대로 써요
+        jdbc.query("SELECT equipment_id, CAST(ended_at AS DATE), COUNT(*) FROM product_flow"
+                + " WHERE ended_at >= :from AND ended_at < :to GROUP BY equipment_id, CAST(ended_at AS DATE)", p, rs -> {
+            Map<LocalDate, Qty> m = qty.computeIfAbsent(rs.getString(1), k -> new HashMap<>());
+            LocalDate d = rs.getObject(2, LocalDate.class);
+            Qty old = m.getOrDefault(d, Qty.ZERO);
+            m.put(d, new Qty(Math.max(old.produced(), rs.getLong(3)), old.judged(), old.ok()));
+        });
         Map<String, Map<LocalDate, Long>> shipOk = new HashMap<>();
         jdbc.query("SELECT line_id, CAST(inspected_at AS DATE), COUNT(*) FROM inspection_result"
                 + " WHERE result = 'OK' AND line_id IS NOT NULL AND inspected_at >= :from AND inspected_at < :to"
                 + " GROUP BY line_id, CAST(inspected_at AS DATE)", p, rs -> {
             shipOk.computeIfAbsent(rs.getString(1), k -> new HashMap<>()).put(rs.getObject(2, LocalDate.class), rs.getLong(3));
         });
-        return new Data(eqs, ivs, cycle, qty, shipOk);
+        Map<String, List<Iv>> cover = new HashMap<>();
+        jdbc.query("SELECT equipment_id, started_at, ended_at FROM equipment_status_history"
+                + " WHERE started_at < :to AND (ended_at IS NULL OR ended_at > :from)", p, rs -> {
+            cover.computeIfAbsent(rs.getString(1), k -> new ArrayList<>()).add(new Iv(rs.getObject(2, LocalDateTime.class),
+                    rs.getObject(3, LocalDateTime.class), false));
+        });
+        return new Data(eqs, ivs, cycle, qty, shipOk, cover);
     }
 
     /** 끝나지 않은 구간(end = null)은 지금까지로 봐요 */

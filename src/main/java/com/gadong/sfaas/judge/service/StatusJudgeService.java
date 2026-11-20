@@ -98,7 +98,8 @@ public class StatusJudgeService {
     Decision decide(Equipment e, Snapshot s) {
         if (s.fault().contains(e.id())) return new Decision("D", "UP_BREAKDOWN", null);
         LocalDateTime seen = s.lastSeen().get(e.id());
-        if (seen == null || seen.isBefore(s.now().minusSeconds(DC_SECONDS))) return new Decision("DC", null, null);
+        // 가상 시계 배속이면 상태 신호(실제 1초마다) 간격도 가상 시각으로 그만큼 벌어져요 → 끊김 기준도 배속만큼 (11/21)
+        if (seen == null || seen.isBefore(s.now().minusSeconds((long) (DC_SECONDS * Math.max(1.0, Kst.speed()))))) return new Decision("DC", null, null);
         Long planned = s.planned().get(e.id()); // 공용 설비(도장·검사)는 S-02가 이벤트를 만들지 않아서 S가 안 나와요
         if (planned != null) return new Decision("S", null, planned);
         // 프레스 1~3단은 단 사이에 쌓을 자리가 없어 뒤 단이 받아 갈 때까지 끝낸 제품을 들고 서 있어요 → 후공정 정지 대기

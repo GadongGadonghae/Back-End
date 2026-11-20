@@ -72,6 +72,23 @@ public class PlanningController {
         return service.setPlan(date, request);
     }
 
+    @Operation(summary = "G-04 공장 목표 저장 (공장장)",
+            description = "quantity = 그날 공장 전체 목표. 처음 정하거나 줄이거나 다른 날이면 가동 라인(오늘은 계획정지 라인 빼고)에 똑같이 나눠 저장. "
+                    + "오늘 목표를 올리면 라인 목표는 그대로 두고 이전·새 목표를 기록 → 늘어난 수량은 추가 주문 · 배정 대기(pending, G-05). "
+                    + "생산관리팀장이 추가 주문 배정 보고서(R-05, targetChangeId)로 나누고 공장장이 결재하면 라인 목표에 들어가요")
+    @PreAuthorize("hasRole('PLANT_HEAD')")
+    @PutMapping("/production/plans/{date}/total")
+    public TargetTotalResponse setTotal(@PathVariable @DateTimeFormat(pattern = DATE) LocalDate date, @RequestBody TargetTotalRequest request) {
+        return service.setTotal(date, request);
+    }
+
+    @Operation(summary = "G-05 목표 증가 배정 대기", description = "그날 공장장이 목표를 올려서 아직 라인에 안 나눈 수량. 없으면 204")
+    @GetMapping("/production/plans/{date}/pending")
+    public org.springframework.http.ResponseEntity<PendingTargetResponse> pendingTarget(@PathVariable @DateTimeFormat(pattern = DATE) LocalDate date) {
+        PendingTargetResponse p = service.pendingTarget(date);
+        return p == null ? org.springframework.http.ResponseEntity.noContent().build() : org.springframework.http.ResponseEntity.ok(p);
+    }
+
     @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. code = 고장 사유 코드. 보고서는 R-03으로 만들고(생산관리팀장), R-04로 공장장이 승인(결재)해요. approved = 승인 여부.")
     @GetMapping("/reassignments")
     public PageResponse<ReassignmentReportResponse> reports(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
@@ -127,6 +144,15 @@ public class PlanningController {
         ReassignmentDetailResponse r = replanService.createOrder(request);
         reportFlow.syncReplan(r);
         return r;
+    }
+
+    @Operation(summary = "R-07 배정 값 고치기 (생산관리팀장)",
+            description = "결재 요청 전(작성 중)에만. body = {\"A\": 120, \"B\": 80} 라인별 추가 배정 수량(0 이상, 배정 표에 있는 라인만). "
+                    + "고친 뒤 R-02 모양으로 줘요. 결재(승인)하면 고친 수량대로 목표에 들어가요. 결재 요청 중이면 409 (회수 R-16 뒤 고치기)")
+    @PreAuthorize("hasRole('PROD_LEAD')")
+    @PutMapping("/reassignments/{reportId}/allocations")
+    public ReassignmentDetailResponse editAllocations(@PathVariable long reportId, @RequestBody java.util.Map<String, Integer> addQty) {
+        return reportFlow.editReplan(reportId, addQty);
     }
 
     @Operation(summary = "R-06 추가 주문 배정 승인·적용",

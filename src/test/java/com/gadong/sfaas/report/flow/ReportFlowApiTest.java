@@ -4,6 +4,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -58,7 +59,7 @@ class ReportFlowApiTest {
         String body = mvc.perform(post("/api/reports").with(user("lead").roles("PROD_LEAD")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"kind\":\"REPLAN\",\"targetKey\":\"10\"}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("WRITTEN"))
+                .andExpect(jsonPath("$.status").value("DRAFT"))   // 만들기만 하면 작성 중 (11/20)
                 .andExpect(jsonPath("$.campusId").value("BODY"))
                 .andExpect(jsonPath("$.factoryId").value(1))
                 .andExpect(jsonPath("$.writtenBy.userName").value("김팀장"))
@@ -66,6 +67,35 @@ class ReportFlowApiTest {
                 .andExpect(jsonPath("$.content.lossQty").exists())
                 .andReturn().getResponse().getContentAsString();
         String id = idOf(body, "reportId");
+
+        String replanId = idOf(body, "replanReportId");
+
+        // 작성 중: 공장장은 아직 결재 못 함. 팀장은 배정 값을 고칠 수 있음 (R-07)
+        mvc.perform(post("/api/reports/" + id + "/approve").with(user("boss").roles("PLANT_HEAD")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("REPORT_STATE_CONFLICT"));
+        String detail = mvc.perform(get("/api/reassignments/" + replanId).with(user("lead").roles("PROD_LEAD")))
+                .andReturn().getResponse().getContentAsString();
+        String line = detail.replaceAll("(?s).*?\"targetLineId\":\"([A-Z0-9-]+)\".*", "$1");
+        mvc.perform(put("/api/reassignments/" + replanId + "/allocations").with(user("lead").roles("PROD_LEAD"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"" + line + "\":7}"))
+                .andExpect(status().isOk());
+        mvc.perform(put("/api/reassignments/" + replanId + "/allocations").with(user("boss").roles("PLANT_HEAD"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"" + line + "\":7}")).andExpect(status().isForbidden());
+        mvc.perform(put("/api/reassignments/" + replanId + "/allocations").with(user("lead").roles("PROD_LEAD"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"Z\":7}")).andExpect(status().isBadRequest());
+
+        // 작성 완료 · 결재 요청 (R-15) → 회수 (R-16) → 다시 결재 요청. 결재 요청 중에는 값을 못 고침
+        mvc.perform(post("/api/reports/" + id + "/request").with(user("lead").roles("PROD_LEAD")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("WRITTEN"))
+                .andExpect(jsonPath("$.writtenBy.userName").value("김팀장"));
+        mvc.perform(put("/api/reassignments/" + replanId + "/allocations").with(user("lead").roles("PROD_LEAD"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"" + line + "\":8}")).andExpect(status().isConflict());
+        mvc.perform(post("/api/reports/" + id + "/request").with(user("lead").roles("PROD_LEAD"))).andExpect(status().isConflict());
+        mvc.perform(post("/api/reports/" + id + "/recall").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isForbidden());
+        mvc.perform(post("/api/reports/" + id + "/recall").with(user("lead").roles("PROD_LEAD")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("DRAFT"));
+        mvc.perform(post("/api/reports/" + id + "/request").with(user("lead").roles("PROD_LEAD")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("WRITTEN"));
 
         // 권한·순서
         mvc.perform(post("/api/reports").with(user("boss").roles("PLANT_HEAD")).contentType(MediaType.APPLICATION_JSON)
@@ -95,15 +125,18 @@ class ReportFlowApiTest {
         mvc.perform(get("/api/mes/reports").with(user("campus").roles("CAMPUS")))
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.items[0].status").value("SENT"))
-                .andExpect(jsonPath("$.items[0].content").isEmpty());
+                .andExpect(jsonPath("$.items[0].content").exists());   // 수신함은 내용까지 (다른 컴퓨터의 캠퍼스장 열람, 11/20)
         mvc.perform(get("/api/reports/" + id).with(user("campus").roles("CAMPUS")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.content").exists());
         mvc.perform(get("/api/mes/reports").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isForbidden());
 
-        // 전송 뒤 다시 작성·전송 막음
-        mvc.perform(post("/api/reports").with(user("lead").roles("PROD_LEAD")).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"kind\":\"REPLAN\",\"targetKey\":\"10\"}")).andExpect(status().isConflict());
+        // 전송한 보고서는 다시 전송 못 함. 같은 고장으로 계획을 다시 고치면 새 보고서·새 결재 (11/20)
         mvc.perform(post("/api/reports/" + id + "/send").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isConflict());
+        String again = mvc.perform(post("/api/reports").with(user("lead").roles("PROD_LEAD")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"kind\":\"REPLAN\",\"targetKey\":\"10\"}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.status").value("DRAFT"))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(idOf(again, "reportId")).isNotEqualTo(id);
     }
 
     @Test
@@ -113,8 +146,8 @@ class ReportFlowApiTest {
                 .content("{\"downtimeId\":12}")).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         String replanId = idOf(body, "reportId");
         mvc.perform(get("/api/reports").with(user("lead").roles("PROD_LEAD")).param("replanId", replanId))
-                .andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.items[0].status").value("WRITTEN"))
-                .andExpect(jsonPath("$.items[0].targetKey").value("12"));
+                .andExpect(jsonPath("$.total").value(1)).andExpect(jsonPath("$.items[0].status").value("DRAFT"))
+                .andExpect(jsonPath("$.items[0].targetKey").value("12#" + replanId));   // 보고서마다 따로 (11/20)
         mvc.perform(post("/api/reassignments/" + replanId + "/approve").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
         mvc.perform(get("/api/reports").with(user("lead").roles("PROD_LEAD")).param("replanId", replanId))
                 .andExpect(jsonPath("$.items[0].status").value("APPROVED"));

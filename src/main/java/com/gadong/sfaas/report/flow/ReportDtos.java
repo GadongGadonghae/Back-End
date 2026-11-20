@@ -15,6 +15,9 @@ public final class ReportDtos {
      */
     public record ReportCreateRequest(String kind, String targetKey, String additionalRequest, JsonNode content) {}
 
+    /** R-15 결재 요청 본문 (선택): 그 순간 화면 문서 */
+    public record ReportRequestBody(JsonNode content) {}
+
     public record Person(Integer userId, String userName) {}
 
     /** 보고서 객체 (목록·MES에서는 content = null). replanReportId = 계획수정 보고서 번호(R-02로 열어요) */

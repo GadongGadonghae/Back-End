@@ -16,8 +16,32 @@ public final class Kst {
 
     private Kst() {}
 
+    /** 시연용 가상 시계 (11/21, SimClockLoader가 DB sim_clock에서 읽어 넣음). virtualAt = realAt 때의 가상 시각 */
+    public record Sim(LocalDateTime virtualAt, LocalDateTime realAt, double speed) {}
+
+    private static volatile Sim sim;
+
+    public static void setSim(Sim s) {
+        sim = s;
+    }
+
+    public static Sim sim() {
+        return sim;
+    }
+
+    /** 가상 시계 배속 (꺼져 있으면 1) */
+    public static double speed() {
+        Sim s = sim;
+        return s == null ? 1.0 : s.speed();
+    }
+
+    /** 지금 시각. 가상 시계가 켜져 있으면 가상 시각 = virtualAt + (실제 지금 − realAt) × speed */
     public static LocalDateTime now() {
-        return LocalDateTime.now(ZONE).truncatedTo(ChronoUnit.SECONDS);
+        LocalDateTime real = LocalDateTime.now(ZONE);
+        Sim s = sim;
+        if (s == null) return real.truncatedTo(ChronoUnit.SECONDS);
+        long ms = (long) (java.time.Duration.between(s.realAt(), real).toMillis() * s.speed());
+        return s.virtualAt().plus(java.time.Duration.ofMillis(ms)).truncatedTo(ChronoUnit.SECONDS);
     }
 
     public static OffsetDateTime of(LocalDateTime t) {

@@ -5,7 +5,9 @@ import static com.gadong.sfaas.global.util.Checks.invalid;
 import com.gadong.sfaas.auth.service.CurrentUser;
 import com.gadong.sfaas.availability.dto.PlanningDtos.*;
 import com.gadong.sfaas.availability.entity.ProductionTarget;
+import com.gadong.sfaas.availability.entity.TargetChange;
 import com.gadong.sfaas.availability.repository.ProductionTargetRepository;
+import com.gadong.sfaas.availability.repository.TargetChangeRepository;
 import com.gadong.sfaas.global.exception.BusinessException;
 import com.gadong.sfaas.global.exception.ErrorCode;
 import com.gadong.sfaas.global.response.PageResponse;
@@ -48,9 +50,11 @@ public class PlanningService {
     private final ProductionStats productionStats;
     private final ProductionTargetRepository targetRepository;
     private final CurrentUser currentUser;
+    private final TargetChangeRepository changeRepository;
 
     public PlanningService(NamedParameterJdbcTemplate jdbc, MasterService masterService, DowntimeCodeRepository downtimeCodeRepository, ProductionStats productionStats,
-                           ProductionTargetRepository targetRepository, CurrentUser currentUser) {
+                           ProductionTargetRepository targetRepository, CurrentUser currentUser, TargetChangeRepository changeRepository) {
+        this.changeRepository = changeRepository;
         this.jdbc = jdbc;
         this.masterService = masterService;
         this.downtimeCodeRepository = downtimeCodeRepository;
@@ -105,6 +109,59 @@ public class PlanningService {
             target.change(request.planQty(), Kst.now(), by);
         }
         return plan(target);
+    }
+
+    // ── G-04 공장 목표 저장 · G-05 배정 대기 (11/20) ──
+
+    /**
+     * 공장 목표를 저장해요 (공장장).
+     * <ul>
+     *   <li>처음 정하거나 줄이거나 다른 날: 가동 라인(오늘이면 계획정지 중인 라인 빼고)에 똑같이 나눠 저장 (나머지는 앞 라인부터 1개씩)</li>
+     *   <li>오늘 목표를 올리면: 라인 목표는 그대로 두고 이전·새 목표를 기록 → 늘어난 수량 = 추가 주문 · 배정 대기.
+     *       생산관리팀장이 추가 주문 배정 보고서로 라인에 나누고, 공장장이 결재하면 라인 목표에 들어가요</li>
+     * </ul>
+     */
+    @Transactional
+    public TargetTotalResponse setTotal(LocalDate date, TargetTotalRequest request) {
+        if (request == null || request.quantity() == null || request.quantity() <= 0) throw invalid("목표 수량은 1 이상이어야 합니다");
+        LocalDateTime now = Kst.now();
+        if (date.isBefore(now.toLocalDate())) throw invalid("지난 날짜의 목표는 바꿀 수 없습니다");
+        int after = request.quantity();
+        List<ProductionTarget> current = targetRepository.findByTargetDateBetweenOrderByTargetDateAscLineIdAsc(date, date);
+        int before = current.stream().mapToInt(ProductionTarget::getTargetQty).sum();
+        boolean today = date.equals(now.toLocalDate());
+        // 이전 배정 대기는 이 저장으로 대신해요
+        changeRepository.findByTargetDateAndClosedAtIsNullOrderByChangeIdDesc(date).forEach(c -> c.close(now));
+        if (today && before > 0 && after != before) {   // 11/21: 줄일 때도 기록 → 생산관리팀장 보고서(어느 라인을 줄이거나 멈출지) → 결재 때 반영
+            TargetChange c = changeRepository.save(new TargetChange(date, before, after, currentUser.id(), now));
+            return new TargetTotalResponse(date.toString(), before, after, after - before, c.getChangeId(), current.stream().map(this::plan).toList());
+        }
+        List<String> lines = jdbc.queryForList("SELECT line_id FROM line ORDER BY line_id", Map.of(), String.class);
+        List<String> stopped = today ? jdbc.queryForList("SELECT DISTINCT e.line_id FROM downtime_event d JOIN equipment e ON e.equipment_id = d.equipment_id"
+                + " WHERE d.status = 'S' AND d.ended_at IS NULL AND e.line_id IS NOT NULL", Map.of(), String.class) : List.of();
+        List<String> use = lines.stream().filter(l -> !stopped.contains(l)).toList();
+        if (use.isEmpty()) use = lines;
+        int each = after / use.size();
+        int rest = after % use.size();
+        List<PlanResponse> saved = new ArrayList<>();
+        for (String l : lines) {
+            int i = use.indexOf(l);
+            saved.add(setPlan(date, new PlanRequest(l, i < 0 ? 0 : each + (i < rest ? 1 : 0))));
+        }
+        return new TargetTotalResponse(date.toString(), before, after, 0, null, saved);
+    }
+
+    /** 그날 목표를 올려서 생긴 배정 대기 (없으면 null). pending = 새 목표 − 지금 라인 목표 합 */
+    public PendingTargetResponse pendingTarget(LocalDate date) {
+        List<TargetChange> open = changeRepository.findByTargetDateAndClosedAtIsNullOrderByChangeIdDesc(date);
+        if (open.isEmpty()) return null;
+        TargetChange c = open.get(0);
+        int sum = targetRepository.findByTargetDateBetweenOrderByTargetDateAscLineIdAsc(date, date).stream().mapToInt(ProductionTarget::getTargetQty).sum();
+        int pending = c.getAfterQty() - sum;
+        if (pending == 0) return null;   // 11/21: 음수 = 목표 감소 대기
+        String by = c.getChangedBy() == null ? null : jdbc.query("SELECT user_name FROM users WHERE user_id = :id", Map.of("id", c.getChangedBy()),
+                rs -> rs.next() ? rs.getString(1) : null);
+        return new PendingTargetResponse(c.getChangeId(), date.toString(), c.getBeforeQty(), c.getAfterQty(), pending, by, Kst.of(c.getChangedAt()), c.getReportId());
     }
 
     /** R-01: 생성 시각(created_at) 기준 기간 조회, 최신순. 보고서는 고장(D) 건에서 R-03으로 만들어요(승인 없음). R-02·R-03은 ReplanService */

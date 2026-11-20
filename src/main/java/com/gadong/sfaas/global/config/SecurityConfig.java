@@ -38,6 +38,7 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/sim/clock").permitAll()   // 시연용 가상 시계 (11/21)
                 .requestMatchers(
                     "/swagger-ui/**",
                     "/v3/api-docs/**",

@@ -4,6 +4,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -344,11 +345,167 @@ class ReplanApiTest {
         em.flush();   // 목표는 JPA로 바뀌어서, 같은 트랜잭션의 JDBC 조회 전에 내보내요 (실서버는 커밋 때)
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
                 "select count(*) from downtime_event where stop_group_id = 77 and ended_at is null", Integer.class)).isZero();
+        // 오늘 목표 = 원래 200 + 배정 합 (배정 합은 자정까지 남은 시간에 따라 달라져요: 밤늦게 돌리면 300보다 작음)
+        int added = jdbc.queryForObject("select coalesce(sum(added_qty), 0) from reassignment_detail where report_id = " + id, Integer.class);
+        org.assertj.core.api.Assertions.assertThat(added).isPositive();
         org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
-                "select sum(target_qty) from production_target where target_date = '" + today + "'", Integer.class)).isEqualTo(500);
+                "select sum(target_qty) from production_target where target_date = '" + today + "'", Integer.class)).isEqualTo(200 + added);
         mvc.perform(get("/api/reassignments/" + id)).andExpect(jsonPath("$.approved").value(true))
                 .andExpect(jsonPath("$.approvedAt").exists()).andExpect(jsonPath("$.approvedBy").value("김관리"));
         mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("u1").roles("PLANT_HEAD"))).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void orderStopRequest_stopsLineAndMovesItsPlan() throws Exception {
+        // 오늘 A·B 100씩. "B라인 정지하고 재배정해" (수량 없음) → B 정지, B 남은 100을 A가 맡음 → 결재하면 B 계획정지 (11/21)
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).toString();
+        jdbc.batchUpdate(
+                "insert into downtime_code(code, code_name, is_planned) values ('PL_SHIFT','교대',true)",
+                "insert into production_target(target_date, line_id, target_qty, created_at) values "
+                        + "('" + today + "','A',100,'" + today + " 00:00:00'), ('" + today + "','B',100,'" + today + " 00:00:00')");
+        org.assertj.core.api.Assertions.assertThat(com.gadong.sfaas.report.OrderRequestParser.stopLines("B라인 정지하고 C라인 멈춰, 계획정지 중인 E라인은 그대로"))
+                .containsExactly("B", "C");
+        String body = mvc.perform(post("/api/reassignments/orders").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request\":\"B라인 정지하고 재배정해\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.ai.order.stopLines[0]").value("B"))
+                .andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+        em.flush();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select added_qty from reassignment_detail where report_id = " + id + " and line_id = 'B'", Integer.class)).isEqualTo(-100);
+        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
+        em.flush();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select count(*) from downtime_event d join equipment e on e.equipment_id = d.equipment_id where e.line_id = 'B' and d.status = 'S' and d.ended_at is null",
+                Integer.class)).isPositive();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select target_qty from production_target where target_date = '" + today + "' and line_id = 'B'", Integer.class)).isZero();
+    }
+
+    @Test
+    void g04LowerTarget_stopsLineAndCutsPlan() throws Exception {
+        // 오늘 A·B 100씩. 공장장이 200 → 80으로 줄임 → 감소 대기 −120 → 보고서: B 정지(남은 100), A 20 줄임 → 결재하면 B 계획정지 (11/21)
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).toString();
+        jdbc.batchUpdate(
+                "insert into downtime_code(code, code_name, is_planned) values ('PL_SHIFT','교대',true)",
+                "insert into production_target(target_date, line_id, target_qty, created_at) values "
+                        + "('" + today + "','A',100,'" + today + " 00:00:00'), ('" + today + "','B',100,'" + today + " 00:00:00')");
+        String saved = mvc.perform(put("/api/production/plans/" + today + "/total").with(user("boss").roles("PLANT_HEAD"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":80}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.pending").value(-120))
+                .andReturn().getResponse().getContentAsString();
+        String changeId = saved.replaceAll("(?s).*?\"changeId\":(\\d+).*", "$1");
+        em.flush();
+        mvc.perform(get("/api/production/plans/" + today + "/pending")).andExpect(jsonPath("$.pending").value(-120));
+        String body = mvc.perform(post("/api/reassignments/orders").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request\":\"목표 줄었어. 계획 줄여줘\",\"targetChangeId\":" + changeId + "}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.ai.order.addQty").value(-120))
+                .andExpect(jsonPath("$.ai.order.stopLines[0]").value("B"))
+                .andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
+        em.flush();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select sum(target_qty) from production_target where target_date = '" + today + "'", Integer.class)).isEqualTo(80);
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select count(*) from downtime_event d join equipment e on e.equipment_id = d.equipment_id where e.line_id = 'B' and d.status = 'S' and d.ended_at is null",
+                Integer.class)).isPositive();
+        mvc.perform(get("/api/production/plans/" + today + "/pending")).andExpect(status().isNoContent());
+    }
+
+    @Test
+    void faultReport_startsOnlyRequestedStoppedLine() throws Exception {
+        // 오늘 A 고장(진행 중), B 가동, C·D 계획정지. "C라인 가동해서 재배정" → C만 새로 켜는 후보, D는 빼요.
+        // 결재하면 C 계획정지 끝 (가동 명령), D는 그대로 (11/21)
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).toString();
+        String ago = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Seoul")).minusMinutes(5).withNano(0).toString().replace('T', ' ');
+        jdbc.batchUpdate(
+                "insert into line(line_id, line_name, default_paint_id, current_paint_id) values ('D','D라인','PT2','PT2')",
+                "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values "
+                        + "('C-PR1','C라인 프레스 1호기','PRESS','C',1,true), ('D-PR1','D라인 프레스 1호기','PRESS','D',1,true)",
+                "insert into downtime_code(code, code_name, is_planned) values ('PL_SHIFT','교대',true)",
+                "insert into downtime_event(downtime_id, equipment_id, status, code, started_at, stop_group_id) values "
+                        + "(30,'A-PR1','D','UP_BREAKDOWN','" + ago + "', null), "
+                        + "(31,'C-PR1','S','PL_SHIFT','" + today + " 00:00:01', 81), (32,'D-PR1','S','PL_SHIFT','" + today + " 00:00:01', 82)",
+                "insert into production_target(target_date, line_id, target_qty, created_at) values "
+                        + "('" + today + "','A',300,'" + today + " 00:00:00'), ('" + today + "','B',300,'" + today + " 00:00:00')");
+        String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"downtimeId\":30,\"additionalRequest\":\"C라인 가동해서 재배정해\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).contains("\"targetLineId\":\"B\"").contains("\"targetLineId\":\"C\"")
+                .doesNotContain("\"targetLineId\":\"D\"");
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+        em.flush();
+        int toC = jdbc.queryForObject("select added_qty from reassignment_detail where report_id = " + id + " and line_id = 'C'", Integer.class);
+        org.assertj.core.api.Assertions.assertThat(toC).isPositive();
+
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
+        em.flush();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select count(*) from downtime_event where stop_group_id = 81 and ended_at is null", Integer.class)).isZero();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select count(*) from downtime_event where stop_group_id = 82 and ended_at is null", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void g04RaiseTarget_isPendingUntilOrderReportApproved() throws Exception {
+        // 오늘 A·B 100씩 가동, C는 계획정지. 공장장이 공장 목표를 200 → 260으로 올림 → 라인 목표는 그대로, 60개 배정 대기 (11/20)
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).toString();
+        jdbc.batchUpdate(
+                "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values "
+                        + "('C-PR1','C라인 프레스 1호기','PRESS','C',1,true)",
+                "insert into downtime_code(code, code_name, is_planned) values ('PL_CHANGE','모델교체',true)",
+                "insert into downtime_event(downtime_id, equipment_id, status, code, started_at, stop_group_id) values "
+                        + "(21,'C-PR1','S','PL_CHANGE','" + today + " 00:00:01', 78)",
+                "insert into production_target(target_date, line_id, target_qty, created_at) values "
+                        + "('" + today + "','A',100,'" + today + " 00:00:00'), ('" + today + "','B',100,'" + today + " 00:00:00')");
+        mvc.perform(put("/api/production/plans/" + today + "/total").contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":260}"))
+                .andExpect(status().isForbidden());
+        String saved = mvc.perform(put("/api/production/plans/" + today + "/total").with(user("boss").roles("PLANT_HEAD"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":260}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.before").value(200)).andExpect(jsonPath("$.after").value(260)).andExpect(jsonPath("$.pending").value(60))
+                .andReturn().getResponse().getContentAsString();
+        String changeId = saved.replaceAll("(?s).*?\"changeId\":(\\d+).*", "$1");
+        em.flush();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select sum(target_qty) from production_target where target_date = '" + today + "'", Integer.class)).isEqualTo(200);
+        mvc.perform(get("/api/production/plans/" + today + "/pending"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.pending").value(60)).andExpect(jsonPath("$.before").value(200));
+
+        // 생산관리팀장: 목표 변경으로 추가 주문 배정 → 수량은 배정 대기 60, AI에 이전·새 목표
+        String body = mvc.perform(post("/api/reassignments/orders").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request\":\"목표 늘어난 만큼 C라인 가동해서 배정해\",\"targetChangeId\":" + changeId + "}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.ai.order.addQty").value(60))
+                .andExpect(jsonPath("$.ai.order.targetBefore").value(200))
+                .andExpect(jsonPath("$.ai.order.targetAfter").value(260))
+                .andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+        mvc.perform(get("/api/production/plans/" + today + "/pending")).andExpect(jsonPath("$.reportId").value(Long.parseLong(id)));
+
+        // 결재(적용)하면: 다 나눴으면 배정 대기 끝, 덜 나눴으면(밤늦게는 남은 능력이 적음) 남은 수량이 다시 배정 대기 (보고서 연결은 풀림)
+        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("boss").roles("PLANT_HEAD"))).andExpect(status().isOk());
+        em.flush();
+        int lines = jdbc.queryForObject("select sum(target_qty) from production_target where target_date = '" + today + "'", Integer.class);
+        if (lines >= 260) {
+            mvc.perform(get("/api/production/plans/" + today + "/pending")).andExpect(status().isNoContent());
+        } else {
+            mvc.perform(get("/api/production/plans/" + today + "/pending"))
+                    .andExpect(jsonPath("$.pending").value(260 - lines)).andExpect(jsonPath("$.reportId").isEmpty());
+        }
+
+        // 다른 날(앞으로)은 바로 모든 라인에 나눠요 (배정 대기 없음, 합 = 입력값)
+        String next = java.time.LocalDate.parse(today).plusDays(1).toString();
+        mvc.perform(put("/api/production/plans/" + next + "/total").with(user("boss").roles("PLANT_HEAD"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"quantity\":1000}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.pending").value(0));
+        em.flush();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select sum(target_qty) from production_target where target_date = '" + next + "'", Integer.class)).isEqualTo(1000);
     }
 
     @Test

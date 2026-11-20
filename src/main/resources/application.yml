@@ -50,6 +50,8 @@ ai:
 
 # 이 공장의 캠퍼스·공장 구분 (보고서 결재·전송 → 임시 MES 수신함, v0.3.15). 차체 캠퍼스 공장 1에만 도입
 plant:
+  # 근무 끝 시각 (11/21): AI 보고서가 "이 시각까지 남은 생산능력·납기"로 계산해요. 시연 근무 09:00~18:00. 자정까지면 24:00
+  shift-end: ${PLANT_SHIFT_END:18:00}
   campus-id: ${PLANT_CAMPUS_ID:BODY}
   factory-id: ${PLANT_FACTORY_ID:1}
 

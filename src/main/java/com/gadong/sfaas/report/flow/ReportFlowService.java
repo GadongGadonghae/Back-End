@@ -33,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 보고서 결재·전송 + 임시 MES 수신함 (v0.3.15, MES 명세 docs/api-spec-report-approval-mes.md).
  * <ul>
  *   <li>R-10 작성(생산관리팀장): REPLAN은 기존 계획수정 보고서(R-03, ReplanService)를 만들어 그 내용을 담아요. DAILY는 화면이 계산한 내용을 저장</li>
+ *   <li>🆕 11/20 상태: 작성 중 DRAFT(AI 보고서를 만들기만 함) → 작성 WRITTEN(작성 완료·결재 요청, R-15) ⇄ 회수(R-16, 결재 전) → 결재 APPROVED → 전송 SENT</li>
  *   <li>R-13 결재(공장장): WRITTEN만. REPLAN이면 계획수정 보고서를 승인하고 현장에 적용 (R-04와 같음)</li>
  *   <li>R-14 전송(공장장): APPROVED만 → SENT. 전송 뒤에는 다시 작성·전송 안 됨 (409)</li>
  *   <li>M-01 MES 수신함(캠퍼스장만): SENT만</li>
@@ -84,29 +85,62 @@ public class ReportFlowService {
         if (!REPLAN.equals(kind)) throw invalid("kind는 DAILY 또는 REPLAN입니다");
         if (key.isEmpty()) throw invalid("REPLAN의 targetKey(비가동 eventId 또는 TARGET)가 필요합니다");
         boolean target = "TARGET".equalsIgnoreCase(key);
-        // 쓸 수 있는 상태인지 먼저 확인 (전송된 건 다시 못 써요) → 그다음 계획수정 보고서를 만들어요
-        writable(REPLAN, target ? targetKeyOf(now.toLocalDate()) : key);
+        // 11/20: 계획수정 보고서는 만들 때마다 새 결재 기록 (같은 고장·같은 날 목표라도 다시 계획을 고칠 수 있게)
         ReassignmentDetailResponse replan = target
                 ? replanService.create(null, request.additionalRequest(), "target")
                 : replanService.create(parseLong(key), request.additionalRequest(), null);
         return toResponse(syncReplan(replan), true);
     }
 
-    /** 계획수정 보고서가 만들어지면 (R-03·R-10) 결재 흐름에 작성(WRITTEN)으로 기록 */
+    /** 계획수정 보고서가 만들어지면 (R-03·R-05·R-10) 결재 흐름에 작성 중(DRAFT)으로 기록. 공장장에게는 결재 요청(R-15) 때 알려요 */
     @Transactional
     public Report syncReplan(ReassignmentDetailResponse replan) {
-        String key = replan.downtimeId() != null ? String.valueOf(replan.downtimeId())
-                : "target".equals(replan.kind()) ? targetKeyOf(replan.createdAt().toLocalDate()) : "ORDER-" + replan.reportId();
+        // 보고서마다 따로 (11/20): 같은 고장·같은 날 목표로 다시 만들어도 앞 결재(전송 완료 포함)와 섞이지 않고 새로 결재
+        String key = replan.downtimeId() != null ? replan.downtimeId() + "#" + replan.reportId()
+                : "target".equals(replan.kind()) ? targetKeyOf(replan.createdAt().toLocalDate()) + "#" + replan.reportId() : "ORDER-" + replan.reportId();
         Report r = writable(REPLAN, key);
-        r.write(titleOf(replan), json(replan), replan.reportId(), currentUser.id(), Kst.now());
+        r.draft(titleOf(replan), json(replan), replan.reportId(), currentUser.id(), Kst.now());
         return reports.save(r);
     }
 
-    /** 계획수정 보고서가 승인되면 (R-04) 결재 흐름도 결재 완료로 (아직 작성 상태일 때만) */
+    // ── R-15 결재 요청 · R-16 회수 (생산관리팀장, 11/20) ──
+
+    /** 작성 완료 · 결재 요청: 작성 중(DRAFT)만. content = 그 순간 화면 문서 (임시 MES 열람용, 없으면 그대로) */
+    @Transactional
+    public ReportResponse request(long reportId, JsonNode content) {
+        Report r = find(reportId);
+        if (!Report.DRAFT.equals(r.getStatus())) throw conflict(r, "작성 중인 보고서만 결재 요청할 수 있습니다");
+        String snapshot = content == null || content.isNull() ? null
+                : REPLAN.equals(r.getKind()) ? json(java.util.Map.of("doc", content)) : content.toString();
+        r.request(currentUser.id(), Kst.now(), snapshot);
+        return toResponse(r, true);
+    }
+
+    /** 회수: 결재 요청(WRITTEN)을 거둬 작성 중으로. 결재된 뒤에는 못 해요 */
+    @Transactional
+    public ReportResponse recall(long reportId) {
+        Report r = find(reportId);
+        if (!Report.WRITTEN.equals(r.getStatus())) throw conflict(r, "결재 요청 중인 보고서만 회수할 수 있습니다");
+        r.recall();
+        return toResponse(r, true);
+    }
+
+    /** 계획수정 보고서 배정 값 고치기 (생산관리팀장): 결재 요청 전(작성 중)에만 */
+    @Transactional
+    public ReassignmentDetailResponse editReplan(long replanId, java.util.Map<String, Integer> addQty) {
+        reports.findFirstByReplanReportIdOrderByReportIdDesc(replanId).ifPresent(r -> {
+            if (!Report.DRAFT.equals(r.getStatus())) throw conflict(r, "결재 요청 전(작성 중)에만 값을 고칠 수 있습니다. 회수한 뒤 고쳐 주세요");
+        });
+        ReassignmentDetailResponse replan = replanService.editAllocations(replanId, addQty);
+        reports.findFirstByReplanReportIdOrderByReportIdDesc(replanId).ifPresent(r -> r.draft(r.getTitle(), json(replan), replanId, r.getWrittenBy(), r.getWrittenAt()));
+        return replan;
+    }
+
+    /** 계획수정 보고서가 승인되면 (예전 화면 R-04·R-06) 결재 흐름도 결재 완료로 (작성 중·결재 요청 상태일 때만) */
     @Transactional
     public void syncApproved(ReassignmentDetailResponse replan) {
         reports.findFirstByReplanReportIdOrderByReportIdDesc(replan.reportId())
-                .filter(r -> Report.WRITTEN.equals(r.getStatus()))
+                .filter(r -> Report.DRAFT.equals(r.getStatus()) || Report.WRITTEN.equals(r.getStatus()))
                 .ifPresent(r -> r.approve(currentUser.id(), Kst.now(), json(replan)));
     }
 
@@ -121,7 +155,9 @@ public class ReportFlowService {
             // 추가 주문 배정(order)은 승인·적용(R-06: 계획정지 끝내기 + 목표 + 라인 가동 명령), 나머지는 승인하면 계획·도장 경로에 적용 (R-04)
             if (r.getTargetKey().startsWith("ORDER-")) replanService.apply(r.getReplanReportId());
             else replanService.approve(r.getReplanReportId());
-            content = json(replanService.report(r.getReplanReportId()));
+            // 결재 요청 때 찍어 둔 문서({"doc": …})가 있으면 그대로 두고(임시 MES 열람), 없으면 승인 뒤 보고서로
+            JsonNode now = node(r.getContent());
+            if (now == null || !now.has("doc")) content = json(replanService.report(r.getReplanReportId()));
         }
         r.approve(currentUser.id(), Kst.now(), content);
         return toResponse(r, true);
@@ -165,7 +201,9 @@ public class ReportFlowService {
                 .filter(r -> factory == null || factory.equals(r.getFactoryId()))
                 .sorted(Comparator.comparing(Report::getSentAt).reversed())
                 .toList();
-        return page(sent, page, size);
+        // 수신함은 몇 건뿐이라 내용까지 줘요 (다른 컴퓨터의 캠퍼스장도 문서를 열람)
+        List<ReportResponse> items = sent.stream().skip((long) (page - 1) * size).limit(size).map(r -> toResponse(r, true)).toList();
+        return new PageResponse<>(items, sent.size(), page, size);
     }
 
     // ── 도우미 ──

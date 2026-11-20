@@ -19,6 +19,19 @@ public final class PlanningDtos {
 
     public record PlanRequest(String lineId, Integer planQty) {}
 
+    /** G-04 공장 목표 저장 (공장장). quantity = 그날 공장 전체 목표 */
+    public record TargetTotalRequest(Integer quantity) {}
+
+    /**
+     * G-04 결과. before = 저장 전 라인 목표 합, after = 새 공장 목표. pending = 오늘 목표를 올려서 라인에 아직 안 나눈 수량
+     * (추가 주문 · 배정 대기 → 생산관리팀장이 추가 주문 배정 보고서로 나누고 공장장 결재 때 라인 목표에 들어가요). 아니면 0
+     */
+    public record TargetTotalResponse(String date, int before, int after, int pending, Long changeId, List<PlanResponse> lines) {}
+
+    /** G-05 오늘 목표를 올려서 생긴 배정 대기 (없으면 204). reportId = 이 변경으로 만든 추가 주문 배정 보고서 */
+    public record PendingTargetResponse(long changeId, String date, int before, int after, int pending, String changedBy,
+                                        OffsetDateTime changedAt, Long reportId) {}
+
     /** R-01. code는 고장 사유 코드(downtime_event.code). approved = 공장장 승인(결재) 여부 (11/20).
      *  kind = line·paint·vision·target·order. 고장 건이 없는 보고서(target 생산 목표 변경 · order 추가 주문 배정)는 downtimeId = null,
      *  target은 code = "TARGET" */
@@ -37,7 +50,16 @@ public final class PlanningDtos {
                                              Long remainingSec, Double ctSec, Integer stoppedPlan, Integer stoppedDone,
                                              Integer targetQty, Integer unmetQty, AiContent ai,
                                              @Schema(description = "공장장 승인(결재) 여부·승인자 이름·시각 (11/20, R-04)") boolean approved,
-                                             String approvedBy, OffsetDateTime approvedAt) {
+                                             String approvedBy, OffsetDateTime approvedAt,
+                                             @Schema(description = "잔업 (11/21): 근무 끝(납기)까지 남은 능력보다 많이 배정해 근무 뒤에 만드는 몫. 없으면 null") Overtime overtime) {
+        /**
+         * 잔업 (11/21). deadline = 근무 끝(추가 주문은 납기), until = 배정까지 다 만드는 예상 시각, minutes = 잔업 분, qty = 근무 뒤에 만드는 수량.
+         * lines = 라인마다 근무 뒤 수량과 끝나는 시각
+         */
+        public record Overtime(OffsetDateTime deadline, OffsetDateTime until, int minutes, int qty, List<OvertimeLine> lines) {
+            public record OvertimeLine(String lineId, int qty, OffsetDateTime until) {}
+        }
+
         /** targetLineId는 라인 ID, 도장 보고서면 설비 ID(PT1·PT2). share = 남은 능력 비율(%) */
         public record Target(String targetLineId, int spareCapacity, int addQty, Integer remainingPlan, double share) {}
 
@@ -57,9 +79,11 @@ public final class PlanningDtos {
          * runningLines = 지금 가동 중으로 본 라인, newLines = 새로 가동할 라인 (recommended = 요청에 라인이 없어 계산으로 고른 것),
          * idleLines = 쉬고 있는 라인(새로 켤 수 있음), current = 지금 가동 라인만으로 할 때, withNew = 새 라인까지 켤 때
          */
+        /** targetBefore·targetAfter: 공장장이 목표를 올려 생긴 추가 주문이면 이전·새 공장 목표 (아니면 null, 11/20) */
         public record OrderInfo(String request, int addQty, String dueAt, int setupMinutes, List<String> runningLines,
                                 List<String> newLines, boolean recommended, List<String> idleLines, List<String> excludedLines,
-                                String parsedBy, List<String> notes, Scenario current, Scenario withNew) {}
+                                String parsedBy, List<String> notes, Scenario current, Scenario withNew,
+                                Integer targetBefore, Integer targetAfter, List<String> stopLines) {}
 
         /** 라인 묶음 하나로 할 때: 라인들 · 남은 능력 합 · 추가 주문 중 못 만드는 수 */
         public record Scenario(List<String> lines, int capacity, int unmet) {}
@@ -69,8 +93,9 @@ public final class PlanningDtos {
      * R-05 추가 주문 배정 검토 만들기. request = 현장 말 그대로 (AI가 조건으로 해석).
      * 나머지 칸을 주면 해석 결과보다 우선해요 (화면에서 고친 값)
      */
+    /** targetChangeId: 공장장 목표 변경(G-05)으로 만드는 추가 주문이면 그 번호 → addQty를 안 주면 배정 대기 수량, AI에 이전·새 목표를 알려요 */
     public record OrderCreateRequest(String request, Integer addQty, String dueAt, List<String> runningLines, List<String> newLines,
-                                     Integer setupMinutes) {}
+                                     Integer setupMinutes, Long targetChangeId) {}
 
     /**
      * R-06 추가 주문 배정 승인·적용 결과.
