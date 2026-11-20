@@ -95,6 +95,25 @@ public class PlanningController {
         return replanService.create(request == null ? null : request.downtimeId(), request == null ? null : request.additionalRequest());
     }
 
+    @Operation(summary = "R-04 추가 주문 배정 검토 만들기",
+            description = "고장 건 없이, 추가 주문을 지금 가동 중인 라인과 새로 켤 라인에 나누는 검토 보고서를 만들어 저장하고 R-02 모양으로 줘요 (kind = order). "
+                    + "request(500자): \"지금 A~D 4개 라인만 돌리는데 추가 주문 300개 들어왔어. 오늘 안에 끝내야 하니 한 라인 더 가동해줘\" → AI가 조건으로 해석 "
+                    + "(키가 없거나 실패하면 규칙 해석). addQty·dueAt(HH:mm)·runningLines·newLines·setupMinutes를 주면 해석보다 우선. "
+                    + "결과의 ai.order에 해석 조건과 '지금 라인만 / 새 라인까지' 비교가 있어요. 계획은 제안만 하고 바꾸지 않아요.")
+    @PostMapping("/reassignments/orders")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ReassignmentDetailResponse createOrderReport(@RequestBody OrderCreateRequest request) {
+        return replanService.createOrder(request);
+    }
+
+    @Operation(summary = "R-05 추가 주문 배정 승인·적용",
+            description = "kind = order 보고서만, 한 번만. 새 라인의 계획정지 종료 → 오늘 라인 목표 += 배정 수량 → 승인 표시 → "
+                    + "새 라인에 MQTT sfaas/ctl/line {lineId, action: start} (재생기 --hold 라인이 받아 생산 시작 → 대시보드에 가동으로 보여요).")
+    @PostMapping("/reassignments/{reportId}/apply")
+    public ApplyResponse applyReport(@PathVariable long reportId) {
+        return replanService.apply(reportId);
+    }
+
     @Operation(summary = "S-01 계획정지 조회 (진행 중 + 이력)",
             description = "P2. 라인 정지 1건은 stopId 하나로 묶고 그 라인의 설비 6대를 equipmentIds 로 줘요.")
     @GetMapping("/planned-stops")

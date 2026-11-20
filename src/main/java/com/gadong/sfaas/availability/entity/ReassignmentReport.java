@@ -44,4 +44,11 @@ public class ReassignmentReport {
         this.unmetQty = unmetQty;
         this.aiContent = aiContent;
     }
+
+    /** R-05 승인·적용 (추가 주문 배정). 한 번만 */
+    public void approve(Integer by, LocalDateTime at) {
+        this.approved = true;
+        this.approvedBy = by;
+        this.approvedAt = at;
+    }
 }

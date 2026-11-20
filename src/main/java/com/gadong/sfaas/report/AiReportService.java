@@ -9,6 +9,16 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import com.anthropic.client.AnthropicClient;
+import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+import com.anthropic.models.messages.Message;
+import com.anthropic.models.messages.MessageCreateParams;
+import com.anthropic.models.messages.OutputConfig;
+import com.anthropic.models.messages.StopReason;
+import com.anthropic.models.messages.TextBlock;
+import java.util.stream.Collectors;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -45,6 +55,8 @@ public class AiReportService {
     private final AiReportProperties properties;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
+    /** Claude API 클라이언트 (provider=anthropic 이고 키가 있을 때만, 처음 부를 때 만들어요) */
+    private volatile AnthropicClient anthropicClient;
 
     public AiReportService(AiReportProperties properties, ObjectMapper objectMapper, RestClient.Builder builder) {
         this.properties = properties;
@@ -216,32 +228,17 @@ public class AiReportService {
     }
 
     private Draft callLlm(AiReportRequest request, int shortage, List<AiReportResponse.Allocation> allocations) {
-        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
-            throw new LlmUnavailableException("AI_REPORT_API_KEY가 설정되지 않았습니다", null);
-        }
+        String json;
         try {
             Map<String, Object> facts = new LinkedHashMap<>();
             facts.put("incident", request);
             facts.put("calculatedShortage", shortage);
             facts.put("allocation", allocations);
-            Map<String, Object> body = Map.of(
-                    "model", properties.model(),
-                    "temperature", 0.2,
-                    "response_format", Map.of("type", "json_object"),
-                    "messages", List.of(
-                            Map.of("role", "system", "content", SYSTEM_PROMPT),
-                            Map.of("role", "user", "content", objectMapper.writeValueAsString(facts))));
-
-            String raw = restClient.post()
-                    .uri("/chat/completions")
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiKey())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
-            JsonNode content = objectMapper.readTree(raw).path("choices").path(0).path("message").path("content");
-            // 모델에 따라 JSON을 ```json ... ``` 으로 감싸 보내는 경우가 있어 벗겨 내요 (Gemini 등)
-            String json = content.asText().trim().replaceAll("(?s)^```(?:json)?\\s*(.*?)\\s*```$", "$1");
+            json = chatJson(SYSTEM_PROMPT, objectMapper.writeValueAsString(facts));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new LlmUnavailableException("보고서 사실 데이터를 만들지 못했습니다", e);
+        }
+        try {
             Draft draft = objectMapper.readValue(json, Draft.class);
             if (isBlank(draft.title()) || isBlank(draft.summary()) || draft.actions() == null || draft.risks() == null) {
                 throw new LlmUnavailableException("LLM 응답 형식이 올바르지 않습니다", null);
@@ -250,9 +247,128 @@ public class AiReportService {
         } catch (LlmUnavailableException e) {
             throw e;
         } catch (Exception e) {
+            throw new LlmUnavailableException("LLM 응답 형식이 올바르지 않습니다", e);
+        }
+    }
+
+    /** 설정상 시연 모드(LLM 안 부름)인지. 원인 추적(CauseTraceService)도 같은 설정을 따라요 */
+    boolean mockMode() {
+        return properties.mock();
+    }
+
+    String modelName() {
+        return properties.model();
+    }
+
+    /**
+     * LLM에 시스템 지시와 사용자 내용을 보내고 JSON 본문(문자열)을 받아요. ```json 으로 감싸 오면 벗겨 내요 (Gemini 등).
+     * 키 없음·호출 실패·시간 초과는 LlmUnavailableException (호출한 쪽이 템플릿으로 대신해요)
+     */
+    String chatJson(String systemPrompt, String userContent) {
+        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+            throw new LlmUnavailableException("AI_REPORT_API_KEY가 설정되지 않았습니다", null);
+        }
+        if (properties.anthropic()) return stripFence(claudeJson(systemPrompt, userContent));
+        try {
+            Map<String, Object> body = Map.of(
+                    "model", properties.model(),
+                    "temperature", 0.2,
+                    "response_format", Map.of("type", "json_object"),
+                    "messages", List.of(
+                            Map.of("role", "system", "content", systemPrompt),
+                            Map.of("role", "user", "content", userContent)));
+
+            String raw = null;
+            // 503(사용량 폭주)·429(요청 한도)는 잠깐 뒤에 풀리는 경우가 많아 1초·2초 쉬고 두 번까지 다시 불러요
+            for (int attempt = 0; ; attempt++) {
+                try {
+                    raw = restClient.post()
+                            .uri("/chat/completions")
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiKey())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(body)
+                            .retrieve()
+                            .body(String.class);
+                    break;
+                } catch (HttpServerErrorException.ServiceUnavailable | HttpClientErrorException.TooManyRequests e) {
+                    if (attempt >= 2) throw new LlmUnavailableException("LLM 서버가 바빠 응답하지 않았습니다 (" + e.getStatusCode().value() + "), 잠시 뒤 다시 만들어 주세요", e);
+                    log.info("LLM {} 응답, {}초 뒤 다시 시도합니다", e.getStatusCode().value(), attempt + 1);
+                    Thread.sleep(1000L * (attempt + 1));
+                }
+            }
+            JsonNode content = objectMapper.readTree(raw).path("choices").path(0).path("message").path("content");
+            return stripFence(content.asText());
+        } catch (LlmUnavailableException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new LlmUnavailableException("LLM 호출이 중단되었습니다", e);
+        } catch (Exception e) {
             // 키·응답 본문이 섞일 수 있어 원인 메시지는 로그에만 남기고 화면에는 일반 문구만 보낸다
             throw new LlmUnavailableException("LLM 호출에 실패했거나 " + properties.timeoutSeconds() + "초 안에 응답하지 않았습니다", e);
         }
+    }
+
+    /**
+     * Claude API (Anthropic 공식 Java SDK)로 JSON 문장을 받아요.
+     * Claude Opus 5.5는 생각(thinking)이 늘 켜져 있고 temperature를 받지 않아서, 깊이는 effort로만 정해요 (기본 low: 사실 정리라 빠르게).
+     * 거절(refusal)이나 빈 응답은 실패로 보고 호출한 쪽이 템플릿으로 대신해요.
+     */
+    private String claudeJson(String systemPrompt, String userContent) {
+        try {
+            MessageCreateParams params = MessageCreateParams.builder()
+                    .model(properties.model())
+                    .maxTokens(16000L)
+                    .system(systemPrompt)
+                    .outputConfig(OutputConfig.builder().effort(effort()).build())
+                    .addUserMessage(userContent)
+                    .build();
+            Message response = claude().messages().create(params);
+            if (response.stopReason().map(r -> r.equals(StopReason.REFUSAL)).orElse(false)) {
+                throw new LlmUnavailableException("Claude가 이 요청에 답하지 않았습니다 (refusal)", null);
+            }
+            String text = response.content().stream()
+                    .flatMap(block -> block.text().stream())
+                    .map(TextBlock::text)
+                    .collect(Collectors.joining());
+            if (text.isBlank()) throw new LlmUnavailableException("Claude 응답이 비어 있습니다", null);
+            return text;
+        } catch (LlmUnavailableException e) {
+            throw e;
+        } catch (Exception e) {
+            // 키·응답 본문이 섞일 수 있어 원인 메시지는 로그에만 남기고 화면에는 일반 문구만 보낸다
+            throw new LlmUnavailableException("Claude API 호출에 실패했거나 " + properties.timeoutSeconds() + "초 안에 응답하지 않았습니다", e);
+        }
+    }
+
+    private AnthropicClient claude() {
+        AnthropicClient c = anthropicClient;
+        if (c == null) {
+            synchronized (this) {
+                if (anthropicClient == null) {
+                    anthropicClient = AnthropicOkHttpClient.builder()
+                            .apiKey(properties.apiKey())
+                            .timeout(Duration.ofSeconds(properties.timeoutSeconds() > 0 ? properties.timeoutSeconds() : 30))
+                            .maxRetries(1)
+                            .build();
+                }
+                c = anthropicClient;
+            }
+        }
+        return c;
+    }
+
+    private OutputConfig.Effort effort() {
+        return switch (properties.effort() == null ? "" : properties.effort().trim().toLowerCase()) {
+            case "medium" -> OutputConfig.Effort.MEDIUM;
+            case "high" -> OutputConfig.Effort.HIGH;
+            default -> OutputConfig.Effort.LOW;
+        };
+    }
+
+    /** ```json ... ``` 으로 감싸 오면 벗겨 내요 */
+    private static String stripFence(String text) {
+        return text.trim().replaceAll("(?s)^```(?:json)?\\s*(.*?)\\s*```$", "$1");
     }
 
     private static boolean isBlank(String value) {
