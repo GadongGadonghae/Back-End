@@ -20,6 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureMockMvc
 @Transactional
 class TodayStatsApiTest {
+    /** 공장 안 재공·위치는 오늘 기록만 봐요 (11/20) → 테스트 데이터도 오늘 날짜로 */
+    private static final String D = java.time.LocalDate.now(com.gadong.sfaas.global.util.Kst.ZONE).toString();
+
 
     private static final String DAY = "2026-11-10";
 
@@ -93,11 +96,11 @@ class TodayStatsApiTest {
                         + "('B-WD','용접B','WELDING','B',1,true), ('PT2','도장-2','PAINTING',null,2,true)",
                 "update line set current_paint_id = 'PT2' where line_id = 'B'",
                 "insert into welding_data(product_id, equipment_id, measured_at, current, result) values "
-                        + "('B-1','B-WD','2026-11-10 09:00:00',15.0,'OK'), ('B-2','B-WD','2026-11-10 09:00:20',15.0,'OK')",
-                "insert into painting_data(product_id, equipment_id, line_id, measured_at, result) values ('B-1','PT2','B','2026-11-10 09:01:00','OK')",
+                        + "('B-1','B-WD','" + D + " 09:00:00',15.0,'OK'), ('B-2','B-WD','" + D + " 09:00:20',15.0,'OK')",
+                "insert into painting_data(product_id, equipment_id, line_id, measured_at, result) values ('B-1','PT2','B','" + D + " 09:01:00','OK')",
                 "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
-                        + "('B-1','B-WD','B','2026-11-10 08:59:43','2026-11-10 09:00:00'), ('B-1','PT2','B','2026-11-10 09:00:56','2026-11-10 09:01:00'), "
-                        + "('B-2','B-WD','B','2026-11-10 09:00:03','2026-11-10 09:00:20')");
+                        + "('B-1','B-WD','B','" + D + " 08:59:43','" + D + " 09:00:00'), ('B-1','PT2','B','" + D + " 09:00:56','" + D + " 09:01:00'), "
+                        + "('B-2','B-WD','B','" + D + " 09:00:03','" + D + " 09:00:20')");
         mvc.perform(get("/api/production/wip").param("paintId", "PT2"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].process").value("WELDING"))

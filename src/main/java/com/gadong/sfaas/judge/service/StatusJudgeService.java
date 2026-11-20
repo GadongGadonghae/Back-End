@@ -140,12 +140,12 @@ public class StatusJudgeService {
      * 지금 처리 중인 제품은 없음. 공정 불량(폐기) 제품은 빼요
      */
     Set<String> holding(LocalDateTime now) {
-        Set<String> held = new HashSet<>(jdbc.queryForList("""
-                SELECT DISTINCT f.equipment_id FROM product_flow f JOIN equipment e ON e.equipment_id = f.equipment_id
+        Set<String> held = new HashSet<>(jdbc.queryForList(FlowStats.TODAY + """
+                SELECT DISTINCT f.equipment_id FROM t f JOIN equipment e ON e.equipment_id = f.equipment_id
                 WHERE e.process_id = 'PRESS' AND e.seq_no < :last AND f.ended_at IS NOT NULL AND f.ended_at <= :hold
-                  AND NOT EXISTS (SELECT 1 FROM product_flow g WHERE g.product_id = f.product_id AND g.flow_id > f.flow_id)
-                  AND NOT EXISTS (SELECT 1 FROM press_data x WHERE x.product_id = f.product_id AND x.result = 'NG')""",
-                Map.of("last", PRESS_STAGES.size(), "hold", now.minusSeconds(HOLD_SECONDS)), String.class));
+                  AND """ + " " + FlowStats.LAST + " AND " + FlowStats.NOT_NG,
+                Map.of("last", PRESS_STAGES.size(), "hold", now.minusSeconds(HOLD_SECONDS),
+                        "since", now.toLocalDate().atStartOfDay()), String.class));   // 오늘 기록만 (FlowStats.TODAY)   // 오늘 기록만 (FlowStats.today와 같은 기준)
         held.removeAll(flow.inProcess().keySet());
         return held;
     }

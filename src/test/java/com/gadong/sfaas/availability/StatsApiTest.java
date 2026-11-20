@@ -26,6 +26,9 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureMockMvc
 @Transactional
 class StatsApiTest {
+    /** 공장 안 재공·위치는 오늘 기록만 봐요 (11/20) → 테스트 데이터도 오늘 날짜로 */
+    private static final String D = java.time.LocalDate.now(com.gadong.sfaas.global.util.Kst.ZONE).toString();
+
 
     private static final String DAY = "2026-11-10";
 
@@ -100,16 +103,19 @@ class StatsApiTest {
         jdbc.batchUpdate(
                 "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values ('A-PR4','프레스A-4','PRESS','A',4,true)",
                 "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
-                        + "('A-01','A-SL','A','2026-11-10 08:00:00','2026-11-10 08:00:16'), ('A-01','A-PR1','A','2026-11-10 08:00:20','2026-11-10 08:00:37'), "
-                        + "('A-01','A-PR4','A','2026-11-10 08:01:30','2026-11-10 08:01:47'), ('A-01','A-WD','A','2026-11-10 08:01:50','2026-11-10 08:02:07'), " // 용접 뒤 1
-                        + "('A-02','A-SL','A','2026-11-10 08:00:16','2026-11-10 08:00:32'), ('A-02','A-PR4','A','2026-11-10 08:02:00','2026-11-10 08:02:17'), " // PR4 뒤 1
-                        + "('A-03','A-SL','A','2026-11-10 08:00:32','2026-11-10 08:00:48'), ('A-03','A-PR1','A','2026-11-10 08:02:20',null), " // PR1 처리 중
-                        + "('A-04','A-SL','A','2026-11-10 08:00:48','2026-11-10 08:01:04'), " // 슬리팅 뒤 1
-                        + "('A-05','A-SL','A','2026-11-10 08:02:30',null), " // 슬리팅 처리 중
-                        + "('A-06','A-SL','A','2026-11-10 08:01:04','2026-11-10 08:01:20'), " // 슬리팅 NG → 폐기
-                        + "('A-07','PT1','A','2026-11-10 08:03:00','2026-11-10 08:03:04'), " // 도장 뒤 1
-                        + "('B-01','PT1','B','2026-11-10 08:03:04','2026-11-10 08:03:08'), ('B-01','VI','B','2026-11-10 08:03:10',null)", // 검사 중
-                "insert into slitting_data(product_id, equipment_id, measured_at, result) values ('A-06','A-SL','2026-11-10 08:01:20','NG')");
+                        + "('A-01','A-SL','A','" + D + " 08:00:00','" + D + " 08:00:16'), ('A-01','A-PR1','A','" + D + " 08:00:20','" + D + " 08:00:37'), "
+                        + "('A-01','A-PR4','A','" + D + " 08:01:30','" + D + " 08:01:47'), ('A-01','A-WD','A','" + D + " 08:01:50','" + D + " 08:02:07'), " // 용접 뒤 1
+                        + "('A-02','A-SL','A','" + D + " 08:00:16','" + D + " 08:00:32'), ('A-02','A-PR4','A','" + D + " 08:02:00','" + D + " 08:02:17'), " // PR4 뒤 1
+                        + "('A-03','A-SL','A','" + D + " 08:00:32','" + D + " 08:00:48'), ('A-03','A-PR1','A','" + D + " 08:02:20',null), " // PR1 처리 중
+                        + "('A-04','A-SL','A','" + D + " 08:00:48','" + D + " 08:01:04'), " // 슬리팅 뒤 1
+                        + "('A-05','A-SL','A','" + D + " 08:02:30',null), " // 슬리팅 처리 중
+                        + "('A-06','A-SL','A','" + D + " 08:01:04','" + D + " 08:01:20'), " // 슬리팅 NG → 폐기
+                        + "('A-07','PT1','A','" + D + " 08:03:00','" + D + " 08:03:04'), " // 도장 뒤 1
+                        + "('B-01','PT1','B','" + D + " 08:03:04','" + D + " 08:03:08'), ('B-01','VI','B','" + D + " 08:03:10',null)", // 검사 중
+                "insert into slitting_data(product_id, equipment_id, measured_at, result) values ('A-06','A-SL','" + D + " 08:01:20','NG')",
+                "insert into coil_receipt(material_id, received_at, product_qty) values ('C-T1','" + D + " 07:30:00',20), ('C-T2','" + D + " 07:30:00',20)",
+                // 지난 날 기록은 재공에서 빠져요: 2026-11-09 슬리팅 뒤에 남은 제품
+                "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values ('OLD-1','A-SL','A','2026-11-09 18:59:00','2026-11-09 18:59:16')");
 
         mvc.perform(get("/api/production/wip"))
                 .andExpect(jsonPath("$[0].process").value("COIL"))

@@ -98,6 +98,36 @@ class AvailabilityApiTest {
     }
 
     @Test
+    void u08MultiStatusAndCommsLoss() throws Exception {
+        // 쉼표로 여러 상태 (11/20 전에는 'D,S'를 통째로 비교해서 0건)
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "D,S").param("minMinutes", "0"))
+                .andExpect(jsonPath("$.total").value(5));
+        // DC를 고르면 상태 이력의 통신 끊김 구간도 (A-PR1 10:00부터 진행 중) → 고장(D) 4건 + DC 1건. 최근순: 23:50 · 14:00 · 10:00(2번) · 10:00(DC) · 09:00
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "D,DC").param("minMinutes", "0"))
+                .andExpect(jsonPath("$.total").value(5))
+                .andExpect(jsonPath("$.items[3].status").value("DC"))
+                .andExpect(jsonPath("$.items[3].equipmentId").value("A-PR1"))
+                .andExpect(jsonPath("$.items[3].inProgress").value(true))
+                .andExpect(jsonPath("$.items[3].reasonCode").isEmpty())
+                .andExpect(jsonPath("$.items[3].startAt").value("2026-11-10T10:00:00+09:00"));
+        // DC만, 라인·진행 중 조건도 같이 적용
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("lineId", "B"))
+                .andExpect(jsonPath("$.total").value(0));
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("inProgress", "true"))
+                .andExpect(jsonPath("$.total").value(1));
+        // 통신 끊김에는 사유 코드가 없어서 사유 조건을 걸면 빠져요. status를 안 보내면 지금처럼 S·I·D만 (가동률 숫자에 안 섞임)
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "DC").param("reasonCode", "UP_BREAKDOWN"))
+                .andExpect(jsonPath("$.total").value(0));
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("minMinutes", "0"))
+                .andExpect(jsonPath("$.total").value(5));
+        mvc.perform(get("/api/downtime/events").param("from", DAY).param("to", DAY).param("status", "X"))
+                .andExpect(status().isBadRequest());
+        // DC 항목(eventId 음수)은 메모 저장 불가
+        mvc.perform(patch("/api/downtime/events/-1").contentType(MediaType.APPLICATION_JSON).content("{\"memo\":\"x\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void u09CorrectsReasonMemoAndActionBy() throws Exception {
         mvc.perform(patch("/api/downtime/events/2").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reasonCode\":\"UP_DELAY\",\"memo\":\"자재 대기\",\"actionUserId\":1}"))
