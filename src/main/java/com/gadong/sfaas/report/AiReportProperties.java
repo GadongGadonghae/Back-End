@@ -8,6 +8,9 @@ import java.util.List;
 /**
  * AI 보고서 설정 (application.yml 의 ai.report.*).
  *
+ * @param provider            anthropic(Claude API, 기본) 또는 openai(OpenAI 호환 API: Gemini 등, baseUrl 사용)
+ * @param effort              Claude 생각 깊이 low·medium·high (provider=anthropic 일 때만)
+ *
  * @param allocatableStatuses 재배정 후보로 쓸 라인 상태 (명세서 RSID). 기본 R·DC·I.
  *                            DC(통신 끊김)는 가동으로 계산하고, I(대기)는 재공이 없어 능력이 남는 상태라 포함한다.
  *                            D(고장)·S(계획정지)는 제외. I 포함 여부는 팀 확정 전까지 설정으로 바꿀 수 있다.
@@ -15,10 +18,15 @@ import java.util.List;
 @ConfigurationProperties(prefix = "ai.report")
 public record AiReportProperties(
         @DefaultValue("true") boolean mock,                       // 설정이 없으면 시연 모드 (외부 LLM 호출 안 함)
+        @DefaultValue("anthropic") String provider,
         @DefaultValue("https://api.openai.com/v1") String baseUrl,
         @DefaultValue("") String apiKey,
-        @DefaultValue("gpt-4.1-mini") String model,
+        @DefaultValue("claude-opus-5-5") String model,
+        @DefaultValue("low") String effort,
         @DefaultValue("30") int timeoutSeconds,
         @DefaultValue({"R", "DC", "I"}) List<String> allocatableStatuses
 ) {
+    boolean anthropic() {
+        return provider == null || provider.isBlank() || "anthropic".equalsIgnoreCase(provider.trim());
+    }
 }

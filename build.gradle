@@ -46,6 +46,11 @@ dependencies {
     // MQTT 구독 (Node-RED -> Spring Boot)
     implementation 'org.springframework.boot:spring-boot-starter-integration'
     implementation 'org.springframework.integration:spring-integration-mqtt'
+    // 라인 가동 명령 보내기 (추가 주문 적용 → 재생기·설비, sfaas/ctl/line). spring-integration-mqtt는 paho를 직접 넣어야 해요
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+
+    // AI 보고서 문장 (Claude API, Anthropic 공식 Java SDK)
+    implementation 'com.anthropic:anthropic-java:3.3.0'
 
     // API 명세 (Swagger UI)
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'

@@ -1,6 +1,7 @@
 package com.gadong.sfaas.availability;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -30,6 +31,7 @@ class ReplanApiTest {
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
+    @Autowired jakarta.persistence.EntityManager em;
 
     @BeforeEach
     void seed() {
@@ -230,6 +232,129 @@ class ReplanApiTest {
                 .andExpect(jsonPath("$.details[0].spareCapacity").value(10700))
                 .andExpect(jsonPath("$.details[0].addQty").value(197))
                 .andExpect(jsonPath("$.ai.title").value("도장 1호기 생산계획 수정 제안"));
+    }
+
+    @Test
+    void r03CauseTrace_citesEvidence_andScoresAlarmItemHighest() throws Exception {
+        // A-PR1(좌 압력 270~285.3): 11:56 알람 + 직전 10분 기준 이탈 3점, 지난 11/05 고장 때도 같은 항목 알람 → 40 + 20 + 30 + 10 = 100점
+        jdbc.batchUpdate(
+                "insert into threshold(equipment_id, item_name, item_label, unit, lower_limit, upper_limit, updated_at) values "
+                        + "('A-PR1','pressure_left','좌 압력','bar',270,285.3,'2026-11-01 00:00:00')",
+                "insert into press_data(product_id, equipment_id, measured_at, pressure_left, result) values "
+                        + "('A-11','A-PR1','2026-11-10 11:20:00',278,'OK'), ('A-12','A-PR1','2026-11-10 11:30:00',279,'OK'), "
+                        + "('A-13','A-PR1','2026-11-10 11:52:00',290,'NG'), ('A-14','A-PR1','2026-11-10 11:54:00',291,'NG'), "
+                        + "('A-15','A-PR1','2026-11-10 11:58:00',292,'NG')",
+                "insert into product_flow(product_id, equipment_id, line_id, started_at, ended_at) values "
+                        + "('A-11','A-PR1','A','2026-11-10 11:19:50','2026-11-10 11:20:00'), ('A-12','A-PR1','A','2026-11-10 11:29:50','2026-11-10 11:30:00'), "
+                        + "('A-13','A-PR1','A','2026-11-10 11:51:50','2026-11-10 11:52:00'), ('A-14','A-PR1','A','2026-11-10 11:53:50','2026-11-10 11:54:00'), "
+                        + "('A-15','A-PR1','A','2026-11-10 11:57:50','2026-11-10 11:58:00')",
+                "insert into alarm(equipment_id, item_name, measured_value, lower_limit, upper_limit, level, message, raised_at) values "
+                        + "('A-PR1','pressure_left',291,270,285.3,'CRITICAL','좌 압력 상한 초과','2026-11-10 11:56:00'), "
+                        + "('A-PR1','pressure_left',289,270,285.3,'CRITICAL','좌 압력 상한 초과','2026-11-05 08:50:00')",
+                "insert into downtime_event(downtime_id, equipment_id, status, code, detail, started_at, ended_at, action_memo) values "
+                        + "(13,'A-PR1','D','UP_BREAKDOWN',null,'2026-11-05 09:00:00','2026-11-05 09:30:00','유압 실 교체 후 압력 재설정')");
+
+        mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.ai.causeTrace.evidence[0].id").value("E1"))
+                .andExpect(jsonPath("$.ai.causeTrace.evidence[0].type").value("FAULT"))
+                .andExpect(jsonPath("$.ai.causeTrace.evidence[?(@.type == 'ALARM')]").exists())
+                .andExpect(jsonPath("$.ai.causeTrace.evidence[?(@.type == 'TREND')]").exists())
+                .andExpect(jsonPath("$.ai.causeTrace.evidence[?(@.type == 'QUALITY')].detail").value("직전 10분 공정 판정 3개 중 불량 3개"))
+                .andExpect(jsonPath("$.ai.causeTrace.causes[0].id").value("C1"))
+                .andExpect(jsonPath("$.ai.causeTrace.causes[0].label").value("좌 압력 이상 (상한 초과)"))
+                .andExpect(jsonPath("$.ai.causeTrace.causes[0].item").value("pressureLeft"))
+                .andExpect(jsonPath("$.ai.causeTrace.causes[0].score").value(100))
+                .andExpect(jsonPath("$.ai.causeTrace.causes[0].grade").value("HIGH"))
+                .andExpect(jsonPath("$.ai.causeTrace.mock").value(true))
+                .andExpect(jsonPath("$.ai.causeTrace.sentences[0].evidence[0]").value("E1"))
+                .andExpect(jsonPath("$.ai.causeTrace.sentences[?(@.verified == false)]").isEmpty())
+                .andExpect(jsonPath("$.ai.causeTrace.sentences[?(@.kind == 'action')]").exists());
+    }
+
+    @Test
+    void r03CauseTrace_withoutProcessData_isLowAndStillVerified() throws Exception {
+        // 공정값·알람·과거 고장이 없으면 근거가 약함 → 설비 자체 고장 후보 하나, LOW
+        mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON).content("{\"downtimeId\":10}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.ai.causeTrace.causes.length()").value(1))
+                .andExpect(jsonPath("$.ai.causeTrace.causes[0].grade").value("LOW"))
+                .andExpect(jsonPath("$.ai.causeTrace.sentences[?(@.verified == false)]").isEmpty());
+    }
+
+    @Test
+    void r04OrderReport_addsIdleLine_andSavesWithoutFault() throws Exception {
+        // A·B만 가동 중이라고 말함 → C는 쉬는 라인. "한 라인 더" → C를 새로 켬 (계산으로 추천). 고장 건 없이 저장
+        String body = mvc.perform(post("/api/reassignments/orders").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request\":\"지금 A·B 라인만 돌리고 있는데 추가 주문 300개 들어왔어. 오늘 안에 끝내야 하니 한 라인 더 가동해줘\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.kind").value("order"))
+                .andExpect(jsonPath("$.lossQty").value(300))
+                .andExpect(jsonPath("$.equipmentId").doesNotExist())
+                .andExpect(jsonPath("$.ai.title").value("추가 주문 300개 배정 검토"))
+                .andExpect(jsonPath("$.ai.order.addQty").value(300))
+                .andExpect(jsonPath("$.ai.order.dueAt").value("24:00"))
+                .andExpect(jsonPath("$.ai.order.setupMinutes").value(30))
+                .andExpect(jsonPath("$.ai.order.runningLines.length()").value(2))
+                .andExpect(jsonPath("$.ai.order.newLines[0]").value("C"))
+                .andExpect(jsonPath("$.ai.order.recommended").value(true))
+                .andExpect(jsonPath("$.ai.order.parsedBy").value("규칙"))
+                .andExpect(jsonPath("$.ai.order.current.lines.length()").value(2))
+                .andExpect(jsonPath("$.ai.order.withNew.lines.length()").value(3))
+                .andExpect(jsonPath("$.details.length()").value(3))
+                .andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+
+        mvc.perform(get("/api/reassignments/" + id)).andExpect(status().isOk()).andExpect(jsonPath("$.kind").value("order"));
+        mvc.perform(get("/api/reassignments").param("from", "2000-01-01").param("to", "2100-12-31"))
+                .andExpect(jsonPath("$.items[0].kind").value("order"))
+                .andExpect(jsonPath("$.items[0].stopMin").value(0));
+    }
+
+    @Test
+    void r05ApplyOrder_endsPlannedStop_raisesTargets_andOnlyOnce() throws Exception {
+        // C라인은 계획정지 중 (쉬는 라인). A·B 가동 중이라고 말하고 "C라인 가동" → 적용하면 C 계획정지 끝 + 오늘 목표 += 배정
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).toString();
+        jdbc.batchUpdate(
+                "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values "
+                        + "('C-PR1','C라인 프레스 1호기','PRESS','C',1,true)",
+                "insert into downtime_code(code, code_name, is_planned) values ('PL_CHANGE','모델교체',true)",
+                "insert into downtime_event(downtime_id, equipment_id, status, code, started_at, stop_group_id) values "
+                        + "(20,'C-PR1','S','PL_CHANGE','" + today + " 00:00:01', 77)",
+                "insert into production_target(target_date, line_id, target_qty, created_at) values "
+                        + "('" + today + "','A',100,'" + today + " 00:00:00'), ('" + today + "','B',100,'" + today + " 00:00:00')");
+        String body = mvc.perform(post("/api/reassignments/orders").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request\":\"지금 A·B 라인 돌리고 있는데 추가 주문 300개, C라인 추가로 가동해서 재배정해\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.ai.order.newLines[0]").value("C"))
+                .andExpect(jsonPath("$.ai.order.recommended").value(false))
+                .andExpect(jsonPath("$.approved").value(false))
+                .andReturn().getResponse().getContentAsString();
+        String id = body.replaceAll("(?s).*?\"reportId\":(\\d+).*", "$1");
+
+        // 고장 보고서와 같은 R-04 승인으로는 안 되고, 승인·적용(R-06)은 공장장만
+        mvc.perform(post("/api/reassignments/" + id + "/approve").with(user("u1").roles("PLANT_MANAGER"))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/reassignments/" + id + "/apply")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("u1").roles("PLANT_MANAGER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.startedLines[0]").value("C"))
+                .andExpect(jsonPath("$.endedStops[0]").value(77))
+                .andExpect(jsonPath("$.targets.length()").value(3))
+                .andExpect(jsonPath("$.lineCommandSent").value(false));
+        em.flush();   // 목표는 JPA로 바뀌어서, 같은 트랜잭션의 JDBC 조회 전에 내보내요 (실서버는 커밋 때)
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select count(*) from downtime_event where stop_group_id = 77 and ended_at is null", Integer.class)).isZero();
+        org.assertj.core.api.Assertions.assertThat(jdbc.queryForObject(
+                "select sum(target_qty) from production_target where target_date = '" + today + "'", Integer.class)).isEqualTo(500);
+        mvc.perform(get("/api/reassignments/" + id)).andExpect(jsonPath("$.approved").value(true))
+                .andExpect(jsonPath("$.approvedAt").exists()).andExpect(jsonPath("$.approvedBy").value("김관리"));
+        mvc.perform(post("/api/reassignments/" + id + "/apply").with(user("u1").roles("PLANT_MANAGER"))).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void r04OrderReport_requiresQuantity() throws Exception {
+        mvc.perform(post("/api/reassignments/orders").contentType(MediaType.APPLICATION_JSON).content("{\"request\":\"한 라인 더 돌려줘\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

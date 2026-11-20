@@ -31,16 +31,19 @@ mqtt:
   broker-url: tcp://localhost:1883
   topic-raw: sfaas/raw/#
 
-# AI 계획수정 보고서 (report 패키지). OpenAI 호환 API, 기본은 Google Gemini 무료 키 (gemini-3.8-flash, 11/20 2.5-flash 신규 사용 중단으로 변경). 11/19부터 기본은 실제 호출 (mock: false)
-# API 키는 application-local.yml 의 ai.report.api-key 또는 환경 변수 AI_REPORT_API_KEY 에 넣어요 (Git에 올리지 않아요)
+# AI 계획수정 보고서 (report 패키지). 기본은 Google Gemini 무료 키 (OpenAI 호환, gemini-3.8-flash). 11/19부터 기본은 실제 호출 (mock: false)
+# API 키는 application-local.yml 의 ai.report.api-key 또는 환경 변수 AI_REPORT_API_KEY · ANTHROPIC_API_KEY 에 넣어요 (Git에 올리지 않아요)
 # 키가 없거나 호출이 실패하면 템플릿 문장으로 대신 만들고, 보고서 화면에 그 이유(fallbackReason)가 나와요
+# Claude API(Anthropic 공식 Java SDK, 유료 키)를 쓰려면: AI_REPORT_PROVIDER=anthropic, AI_REPORT_MODEL=claude-opus-5-5 (11/20 ai-cause-trace)
 # 키 없이 시연만 할 때: AI_REPORT_MOCK=true
 ai:
   report:
     mock: ${AI_REPORT_MOCK:false}
+    provider: ${AI_REPORT_PROVIDER:openai}           # openai = Gemini 등 OpenAI 호환 (기본, 무료 키) · anthropic = Claude
     base-url: ${AI_REPORT_BASE_URL:https://generativelanguage.googleapis.com/v1beta/openai}
-    api-key: ${AI_REPORT_API_KEY:}
+    api-key: ${AI_REPORT_API_KEY:${ANTHROPIC_API_KEY:}}
     model: ${AI_REPORT_MODEL:gemini-3.8-flash}
-    timeout-seconds: ${AI_REPORT_TIMEOUT_SECONDS:60}   # LLM 연결·응답 제한 시간 (3.8-flash는 20초 안팎 걸림). 넘으면 템플릿 문장으로 대체
+    effort: ${AI_REPORT_EFFORT:low}                     # Claude 생각 깊이 (low · medium · high). 보고서 문장은 사실 정리라 low
+    timeout-seconds: ${AI_REPORT_TIMEOUT_SECONDS:60}   # LLM 연결·응답 제한 시간 (gemini-3.8-flash는 20초 안팎). 넘으면 템플릿 문장으로 대체
     # 재배정 후보 라인 상태 (RSID). D(고장)·S(계획정지)는 제외. I(대기) 포함 여부는 팀 확정 후 조정
     allocatable-statuses: R,DC,I

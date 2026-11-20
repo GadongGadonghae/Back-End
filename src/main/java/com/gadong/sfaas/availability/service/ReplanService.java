@@ -6,7 +6,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gadong.sfaas.auth.entity.User;
 import com.gadong.sfaas.auth.repository.UserRepository;
+import com.gadong.sfaas.availability.dto.PlanningDtos;
+import com.gadong.sfaas.availability.dto.PlanningDtos.OrderCreateRequest;
+import com.gadong.sfaas.availability.dto.PlanningDtos.ApplyResponse;
+import com.gadong.sfaas.availability.dto.PlanningDtos.PlanRequest;
 import com.gadong.sfaas.availability.dto.PlanningDtos.ReassignmentDetailResponse;
+import com.gadong.sfaas.availability.dto.PlanningDtos.ReassignmentDetailResponse.OrderInfo;
 import com.gadong.sfaas.availability.dto.PlanningDtos.ReassignmentDetailResponse.AiContent;
 import com.gadong.sfaas.availability.dto.PlanningDtos.ReassignmentDetailResponse.Target;
 import com.gadong.sfaas.availability.entity.ReassignmentDetail;
@@ -19,6 +24,9 @@ import com.gadong.sfaas.global.util.Kst;
 import com.gadong.sfaas.report.AiReportRequest;
 import com.gadong.sfaas.report.AiReportResponse;
 import com.gadong.sfaas.report.AiReportService;
+import com.gadong.sfaas.report.CauseTrace;
+import com.gadong.sfaas.report.CauseTraceService;
+import com.gadong.sfaas.report.OrderRequestParser;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -26,8 +34,12 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -51,6 +63,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Transactional(readOnly = true)
 public class ReplanService {
+    private static final Logger log = LoggerFactory.getLogger(ReplanService.class);
 
     /** 재배정 후보 라인 상태. AiReportService는 이 상태만 후보로 써요 (지금 고장(D)인 라인은 미리 뺌) */
     private static final String CANDIDATE = "R";
@@ -61,18 +74,27 @@ public class ReplanService {
     private final ReassignmentDetailRepository detailRepository;
     private final UserRepository userRepository;
     private final AiReportService aiReportService;
+    private final CauseTraceService causeTraceService;
+    private final OrderRequestParser orderParser;
+    private final PlanningService planningService;
+    private final LineCommandPublisher lineCommands;
     private final ObjectMapper objectMapper;
     private final com.gadong.sfaas.monitoring.service.MonitoringService monitoringService;
 
     public ReplanService(NamedParameterJdbcTemplate jdbc, ReassignmentReportRepository reportRepository,
                          ReassignmentDetailRepository detailRepository, UserRepository userRepository,
-                         AiReportService aiReportService, ObjectMapper objectMapper,
+                         AiReportService aiReportService, CauseTraceService causeTraceService, OrderRequestParser orderParser,
+                         PlanningService planningService, LineCommandPublisher lineCommands, ObjectMapper objectMapper,
                          com.gadong.sfaas.monitoring.service.MonitoringService monitoringService) {
         this.jdbc = jdbc;
         this.reportRepository = reportRepository;
         this.detailRepository = detailRepository;
         this.userRepository = userRepository;
         this.aiReportService = aiReportService;
+        this.causeTraceService = causeTraceService;
+        this.orderParser = orderParser;
+        this.planningService = planningService;
+        this.lineCommands = lineCommands;
         this.objectMapper = objectMapper;
         this.monitoringService = monitoringService;
     }
@@ -137,7 +159,7 @@ public class ReplanService {
         ReassignmentReport saved = reportRepository.save(new ReassignmentReport(null, shortage, now,
                 user == null ? null : user.getUserId(), "target", now, ct, stoppedPlan, stoppedDone, plantTarget,
                 Math.max(0, shortage - assigned), json(new AiContent(title, ai.summary(), ai.actions(), ai.risks(), markdown,
-                        ai.model(), ai.mock(), ai.fallbackReason(), request, ai.requestInterpretation()))));
+                        ai.model(), ai.mock(), ai.fallbackReason(), request, ai.requestInterpretation(), null, null))));   // 목표 보고서: 원인 추적·주문 정보 없음
         for (Row r : rows) {
             detailRepository.save(new ReassignmentDetail(saved.getReportId(), r.target(), r.capacity(), add.getOrDefault(r.target(), 0),
                     r.remainingPlan()));
@@ -213,6 +235,10 @@ public class ReplanService {
             }
         }
 
+        // 원인 추적: 근거는 지금 모으고(트랜잭션 안), 문장(LLM)은 재배정 문장과 동시에 써서 기다리는 시간을 늘리지 않아요.
+        // 원인 추적이 실패해도 보고서는 만들어요 (causeTrace = null)
+        CompletableFuture<CauseTrace> trace = traceAsync(f.downtimeId());
+
         // 부족 수량·나누기·문장은 AiReportService (팀원 report 패키지). 목표 = 멈춘 쪽 계획, 완료 = 기준 시각까지 실적
         // operatorNote로 계산 규칙을 LLM에 알려 줘요 (문장이 계산과 어긋나지 않게)
         AiReportResponse ai = aiReportService.generate(new AiReportRequest(
@@ -236,13 +262,243 @@ public class ReplanService {
         ReassignmentReport saved = reportRepository.save(new ReassignmentReport(f.downtimeId(), shortage, now,
                 user == null ? null : user.getUserId(), kind, base, ct, stoppedPlan, stoppedDone, plantTarget,
                 Math.max(0, shortage - assigned), json(new AiContent(title, ai.summary(), ai.actions(), ai.risks(), markdown,
-                        ai.model(), ai.mock(), ai.fallbackReason(), request, ai.requestInterpretation()))));
+                        ai.model(), ai.mock(), ai.fallbackReason(), request, ai.requestInterpretation(), trace.join(), null))));
         for (Row r : rows) {
             detailRepository.save(new ReassignmentDetail(saved.getReportId(), r.target(), r.capacity(), add.getOrDefault(r.target(), 0),
                     r.remainingPlan()));
         }
         detailRepository.flush();
         return toResponse(saved);
+    }
+
+    private CompletableFuture<CauseTrace> traceAsync(long downtimeId) {
+        CauseTraceService.Collected collected;
+        try {
+            collected = causeTraceService.collect(downtimeId);
+        } catch (RuntimeException e) {
+            log.warn("원인 추적 근거를 모으지 못했습니다 (downtimeId={}): {}", downtimeId, e.getMessage(), e);
+            return CompletableFuture.completedFuture(null);
+        }
+        return CompletableFuture.supplyAsync(() -> causeTraceService.write(collected)).exceptionally(e -> {
+            log.warn("원인 추적 문장을 쓰지 못했습니다 (downtimeId={}): {}", downtimeId, e.getMessage(), e);
+            return null;
+        });
+    }
+
+    // ── R-05 추가 주문 배정 ──
+
+    /** 쉬던 라인을 새로 켤 때 기본 준비 시간 (분). 요청에 준비 시간이 있으면 그 값 */
+    static final int DEFAULT_SETUP_MIN = 30;
+
+    /**
+     * 추가 주문을 지금 가동 중인 라인(과 새로 켤 라인)에 나누는 검토 보고서를 만들어 저장해요. 고장 건이 없어요 (downtime_id = NULL, kind = order).
+     * <ul>
+     *   <li>요청 문장은 OrderRequestParser가 조건으로 해석 (AI, 실패하면 규칙). 화면에서 준 칸이 있으면 그 값이 우선</li>
+     *   <li>가동 중 라인: 요청에서 말한 라인, 말이 없으면 지금 계획정지(S)가 아니고 오늘 목표가 있는 라인. 지금 고장(D)인 라인은 빼요</li>
+     *   <li>남은 능력: 가동 중 = (납기까지 시간 ÷ 라인 CT) − 남은 계획, 새로 켤 라인 = (납기까지 시간 − 준비 시간) ÷ 라인 CT</li>
+     *   <li>새로 켤 라인을 말하지 않았는데 지금 라인으로 모자라면, 쉬는 라인을 A부터 하나씩 더해 모자람이 없어질 때까지 추천</li>
+     *   <li>나누기와 문장은 고장 보고서와 같은 AiReportService (남은 능력 비율). 계획은 제안만 해요</li>
+     * </ul>
+     */
+    @Transactional
+    public ReassignmentDetailResponse createOrder(OrderCreateRequest body) {
+        String text = body == null || body.request() == null ? "" : body.request().trim();
+        if (text.length() > 500) throw invalid("요청은 500자까지 쓸 수 있습니다");
+        OrderRequestParser.Parsed parsed = orderParser.parse(text);
+        List<String> notes = new ArrayList<>(parsed.notes());
+
+        Integer addQty = body != null && body.addQty() != null ? body.addQty() : parsed.addQty();
+        if (addQty == null || addQty <= 0 || addQty > OrderRequestParser.MAX_QTY) {
+            throw invalid("추가 주문 수량을 알 수 없습니다. 요청에 수량을 적어 주세요 (예: 추가 주문 300개)");
+        }
+        String dueAt = body != null && body.dueAt() != null && !body.dueAt().isBlank() ? body.dueAt().trim()
+                : parsed.dueAt() != null ? parsed.dueAt() : "24:00";
+        int setup = body != null && body.setupMinutes() != null ? body.setupMinutes()
+                : parsed.setupMinutes() != null ? parsed.setupMinutes() : DEFAULT_SETUP_MIN;
+
+        LocalDateTime now = Kst.now();
+        LocalDate day = now.toLocalDate();
+        LocalDateTime due;
+        try {
+            due = "24:00".equals(dueAt) ? day.plusDays(1).atStartOfDay() : day.atTime(java.time.LocalTime.parse(dueAt));
+        } catch (java.time.format.DateTimeParseException e) {
+            throw invalid("납기 시각은 HH:mm 형식입니다");
+        }
+        if (!due.isAfter(now)) throw invalid("납기 " + dueAt + "이(가) 이미 지났습니다");
+        long remainingSec = Duration.between(now, due).getSeconds();
+        BigDecimal ct = cycleTime("'SLITTING', 'PRESS', 'WELDING'");
+        Map<String, Integer> targets = targets(day);
+        Integer plantTarget = targets.isEmpty() ? null : targets.values().stream().mapToInt(Integer::intValue).sum();
+
+        List<String> allLines = jdbc.queryForList("SELECT line_id FROM line ORDER BY line_id", Map.of(), String.class);
+        List<String> excluded = parsed.excludedLines();
+        List<String> down = allLines.stream().filter(l -> downNow(null, l)).toList();
+        down.forEach(l -> notes.add(l + "라인은 지금 고장 중이라 뺐습니다"));
+        List<String> saidRunning = body != null && body.runningLines() != null && !body.runningLines().isEmpty()
+                ? body.runningLines() : parsed.runningLines();
+        List<String> running = new ArrayList<>();
+        List<String> idle = new ArrayList<>();
+        for (String l : allLines) {
+            if (down.contains(l) || excluded.contains(l)) continue;
+            boolean on = saidRunning.isEmpty() ? !plannedStopNow(l) && targets.getOrDefault(l, 0) > 0 : saidRunning.contains(l);
+            (on ? running : idle).add(l);
+        }
+        if (saidRunning.isEmpty()) notes.add("가동 중 라인은 지금 계획정지가 아니고 오늘 목표가 있는 라인으로 봤습니다");
+
+        List<String> saidNew = body != null && body.newLines() != null && !body.newLines().isEmpty() ? body.newLines() : parsed.newLines();
+        List<String> newLines = new ArrayList<>();
+        for (String l : saidNew) {
+            if (running.contains(l)) notes.add(l + "라인은 이미 가동 중이라 새로 켜지 않고 그대로 계산했습니다");
+            else if (idle.contains(l)) newLines.add(l);
+            else notes.add(l + "라인은 고장 중이거나 제외라서 새로 켤 수 없습니다");
+        }
+
+        Map<String, Row> rows = new LinkedHashMap<>();
+        for (String l : running) {
+            int remainingPlan = Math.max(0, targets.getOrDefault(l, 0) - done(day, now, l, null));
+            rows.put(l, new Row(l, remainingPlan, capacity(remainingSec, ct, remainingPlan)));
+        }
+        int currentCap = rows.values().stream().mapToInt(Row::capacity).sum();
+        long newSec = Math.max(0, remainingSec - setup * 60L);
+        boolean recommended = false;
+        if (newLines.isEmpty()) {
+            // 라인을 정하지 않음: "N라인 더"면 그 수만큼, 아니면 모자랄 때만 쉬는 라인을 A부터 더해요
+            int want = parsed.addLineCount() != null ? parsed.addLineCount() : 0;
+            int cap = currentCap;
+            for (String l : idle) {
+                if (want > 0 ? newLines.size() >= want : cap >= addQty) break;
+                newLines.add(l);
+                cap += capacity(newSec, ct, 0);
+            }
+            recommended = !newLines.isEmpty();
+        }
+        for (String l : newLines) rows.put(l, new Row(l, 0, capacity(newSec, ct, 0)));
+        int withCap = rows.values().stream().mapToInt(Row::capacity).sum();
+        PlanningDtos.ReassignmentDetailResponse.Scenario current =
+                new PlanningDtos.ReassignmentDetailResponse.Scenario(List.copyOf(running), currentCap, Math.max(0, addQty - currentCap));
+        PlanningDtos.ReassignmentDetailResponse.Scenario withNew = new PlanningDtos.ReassignmentDetailResponse.Scenario(
+                rows.keySet().stream().sorted().toList(), withCap, Math.max(0, addQty - withCap));
+        if (rows.isEmpty()) throw invalid("나눌 수 있는 라인이 없습니다 (모두 고장·제외)");
+
+        String note = "추가 주문 " + addQty + "개, 납기 오늘 " + dueAt + ". 기준 시각 " + now.toLocalTime().withNano(0) + ", 납기까지 "
+                + remainingSec / 60 + "분, 라인 CT " + ct.stripTrailingZeros().toPlainString() + "초. 가동 중 라인 " + String.join(",", running)
+                + (newLines.isEmpty() ? "" : ", 새로 가동 " + String.join(",", newLines) + "(준비 " + setup + "분 뒤 생산)")
+                + ". availableCapacity = 남은 능력, currentPlan = 남은 계획. 지금 라인만이면 남은 능력 합 " + currentCap + "개, 새 라인까지 "
+                + withCap + "개. 수량은 allocation 값을 그대로 쓰고, 계획은 제안만 하며 자동으로 바꾸지 않음.";
+        AiReportResponse ai = aiReportService.generate(new AiReportRequest(
+                0L, "ORDER", "ORDER", "추가 주문", "추가 주문 " + addQty + "개 (납기 오늘 " + dueAt + ")", Kst.of(now),
+                addQty, 0, 0, dueAt,
+                rows.values().stream().map(r -> new AiReportRequest.LineCondition(r.target(), CANDIDATE, r.capacity(), r.remainingPlan(),
+                        newLines.contains(r.target()) ? "새로 가동 (준비 " + setup + "분)" : null)).toList(),
+                note, null));
+        Map<String, Integer> add = new HashMap<>();
+        ai.allocations().forEach(a -> add.put(a.lineId(), a.quantity()));
+        int assigned = add.values().stream().mapToInt(Integer::intValue).sum();
+        int unmet = Math.max(0, addQty - assigned);
+
+        String title = "추가 주문 " + addQty + "개 배정 검토";
+        String summary = ai.summary();
+        List<String> actions = ai.actions();
+        List<String> risks = ai.risks();
+        String markdown = ai.markdown();
+        if (ai.mock()) {
+            // 템플릿 문장은 고장 보고서용이라 추가 주문에 맞게 다시 써요
+            summary = "추가 주문 " + addQty + "개를 오늘 " + dueAt + "까지 만들기 위해 "
+                    + (newLines.isEmpty() ? "가동 중인 " + running.size() + "개 라인" : String.join("·", newLines) + "라인을 새로 가동해 " + rows.size() + "개 라인")
+                    + "에 " + assigned + "개를 나누는 안을 제안합니다." + (unmet > 0 ? " " + unmet + "개는 납기 안에 만들기 어렵습니다." : "");
+            actions = new ArrayList<>();
+            for (String l : newLines) actions.add(l + "라인 가동을 준비합니다 (준비 " + setup + "분, 금형·자재·작업자 확인).");
+            for (String l : rows.keySet()) if (add.getOrDefault(l, 0) > 0) actions.add(l + "라인에 " + add.get(l) + "개를 추가 배정합니다.");
+            actions.add("계획 변경 전 생산관리자 승인을 받습니다.");
+            risks = new ArrayList<>();
+            if (!newLines.isEmpty()) risks.add("새로 켜는 라인은 준비 시간이 " + setup + "분보다 길어지면 그만큼 생산이 줄어듭니다.");
+            risks.add(unmet > 0 ? "남은 " + unmet + "개는 지금 능력으로 납기 안에 만들 수 없어 납기 협의가 필요합니다."
+                    : "계산상 납기 안에 만들 수 있지만 실제 가동률에 따라 다시 계산해야 합니다.");
+            markdown = null;
+        }
+        OrderInfo order = new OrderInfo(text.isEmpty() ? null : text, addQty, dueAt, setup, List.copyOf(running), List.copyOf(newLines), recommended,
+                idle.stream().filter(l -> !newLines.contains(l)).toList(), List.copyOf(excluded), parsed.parsedBy(), List.copyOf(notes), current, withNew);
+        AiReportResponse.RequestInterpretation interpretation = new AiReportResponse.RequestInterpretation(List.copyOf(excluded), List.of(), "BALANCED",
+                List.of("추가 " + addQty + "개 · 납기 " + dueAt, "가동 중 " + String.join(",", running),
+                        newLines.isEmpty() ? "새 라인 없음" : "새로 가동 " + String.join(",", newLines) + (recommended ? " (계산으로 추천)" : "")));
+
+        User user = currentUser();
+        ReassignmentReport saved = reportRepository.save(new ReassignmentReport(null, addQty, now,
+                user == null ? null : user.getUserId(), "order", now, ct, addQty, 0, plantTarget, unmet,
+                json(new AiContent(title, summary, actions, risks, markdown, ai.model(), ai.mock(), ai.fallbackReason(),
+                        text.isEmpty() ? null : text, interpretation, null, order))));
+        for (Row r : rows.values()) {
+            detailRepository.save(new ReassignmentDetail(saved.getReportId(), r.target(), r.capacity(), add.getOrDefault(r.target(), 0),
+                    r.remainingPlan()));
+        }
+        detailRepository.flush();
+        return toResponse(saved);
+    }
+
+    /** 그 라인에 지금 계획정지(S)가 진행 중인지 */
+    private boolean plannedStopNow(String lineId) {
+        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM downtime_event d JOIN equipment e ON e.equipment_id = d.equipment_id"
+                + " WHERE d.status = 'S' AND d.ended_at IS NULL AND e.line_id = :line", Map.of("line", lineId), Long.class);
+        return n != null && n > 0;
+    }
+
+    // ── R-06 추가 주문 배정 승인·적용 ──
+
+    /**
+     * 추가 주문 배정 보고서를 승인하고 실제로 적용해요 (사람이 누를 때만, 한 번만).
+     * <ol>
+     *   <li>새로 켤 라인의 진행 중 계획정지를 끝내요 (S-03과 같음)</li>
+     *   <li>오늘 라인 목표에 배정 수량을 더해요 (G-03과 같음, 수정자 = 적용한 사람)</li>
+     *   <li>보고서를 승인됨으로 표시 (approved · approved_by · approved_at)</li>
+     *   <li>새 라인에 가동 명령을 보내요 (MQTT {ctl}/line start → 재생기·설비가 생산 시작 → 대시보드에 가동으로 보여요)</li>
+     * </ol>
+     */
+    @Transactional
+    public ApplyResponse apply(long reportId) {
+        ReassignmentReport r = reportRepository.findById(reportId).orElseThrow(() ->
+                new BusinessException(ErrorCode.REASSIGNMENT_NOT_FOUND, "재배정 보고서 " + reportId + "를 찾을 수 없습니다"));
+        if (!"order".equals(r.getKind())) throw invalid("추가 주문 배정 보고서만 적용할 수 있습니다 (고장 보고서는 제안만 해요)");
+        if (Boolean.TRUE.equals(r.getApproved())) throw invalid("이미 적용한 보고서입니다");
+        AiContent content = ai(r.getAiContent());
+        OrderInfo order = content == null ? null : content.order();
+        if (order == null) throw invalid("보고서에 추가 주문 정보가 없습니다");
+        LocalDateTime now = Kst.now();
+        LocalDate today = now.toLocalDate();
+        if (!r.getCreatedAt().toLocalDate().equals(today)) throw invalid("오늘 만든 추가 주문 보고서만 적용할 수 있습니다");
+        List<String> notes = new ArrayList<>();
+
+        // 1) 새 라인의 계획정지 끝내기
+        List<Long> ended = new ArrayList<>();
+        for (String line : order.newLines()) {
+            List<Long> stops = jdbc.queryForList("SELECT DISTINCT d.stop_group_id FROM downtime_event d JOIN equipment e ON e.equipment_id = d.equipment_id"
+                    + " WHERE e.line_id = :line AND d.status = 'S' AND d.ended_at IS NULL AND d.stop_group_id IS NOT NULL", Map.of("line", line), Long.class);
+            for (Long id : stops) {
+                planningService.endPlannedStop(id, null);
+                ended.add(id);
+            }
+            if (stops.isEmpty()) notes.add(line + "라인은 진행 중인 계획정지가 없어 바로 가동 명령만 보냈습니다");
+        }
+
+        // 2) 오늘 목표에 배정 수량 더하기
+        Map<String, Integer> targets = targets(today);
+        List<ApplyResponse.TargetChange> changes = new ArrayList<>();
+        for (ReassignmentDetail d : detailRepository.findByReportIdOrderByLineIdAsc(reportId)) {
+            if (d.getAddedQty() <= 0) continue;
+            int before = targets.getOrDefault(d.getLineId(), 0);
+            planningService.setPlan(today, new PlanRequest(d.getLineId(), before + d.getAddedQty()));
+            changes.add(new ApplyResponse.TargetChange(d.getLineId(), before, before + d.getAddedQty()));
+        }
+
+        // 3) 승인 표시
+        User user = currentUser();
+        r.approve(user == null ? null : user.getUserId(), now);
+
+        // 4) 가동 명령
+        boolean sent = true;
+        for (String line : order.newLines()) sent &= lineCommands.send(line, "start");
+        if (!order.newLines().isEmpty() && !sent) notes.add("라인 가동 명령을 MQTT 브로커에 보내지 못했습니다. 재생기·설비에서 직접 가동해 주세요 (예: start D)");
+        if (order.newLines().isEmpty()) notes.add("새로 켤 라인이 없어 목표만 바꿨습니다");
+        return new ApplyResponse(reportId, Kst.of(now), order.newLines(), ended, changes, !order.newLines().isEmpty() && sent, notes);
     }
 
     /** LLM에 주는 계산 규칙 설명 (보고서 문장의 근거) */
@@ -274,6 +530,8 @@ public class ReplanService {
     public ReassignmentDetailResponse approve(long reportId) {
         ReassignmentReport r = reportRepository.findById(reportId).orElseThrow(() ->
                 new BusinessException(ErrorCode.REASSIGNMENT_NOT_FOUND, "재배정 보고서 " + reportId + "를 찾을 수 없습니다"));
+        // 추가 주문 배정은 승인과 함께 계획을 바꾸므로 R-06 승인·적용으로만 승인해요 (승인만 하고 적용 안 된 상태를 만들지 않게)
+        if ("order".equals(r.getKind())) throw invalid("추가 주문 배정은 '승인하고 적용'(R-06)으로 승인해요");
         User user = currentUser();
         if (!Boolean.TRUE.equals(r.getApproved())) apply(r, user);
         r.approve(user == null ? null : user.getUserId(), Kst.now());
@@ -352,9 +610,11 @@ public class ReplanService {
     }
 
     private ReassignmentDetailResponse toResponse(ReassignmentReport r) {
-        // 목표 변경 보고서는 고장 건이 없어요 → 설비·코드 없이, 시작 = 만든 시각
+        // 고장 건이 없는 보고서: target(생산 목표 변경)·order(추가 주문 배정) → 설비·코드 없이, 시작 = 기준 시각
         Fault f = r.getDowntimeId() == null
-                ? new Fault(0, null, "생산 목표 변경", null, null, null, "TARGET", "생산 목표 변경", "오늘 생산 목표 변경", r.getBaseAt())
+                ? ("target".equals(r.getKind())
+                    ? new Fault(0, null, "생산 목표 변경", null, null, null, "TARGET", "생산 목표 변경", "오늘 생산 목표 변경", r.getBaseAt())
+                    : new Fault(0, null, null, null, null, null, null, null, null, r.getBaseAt()))
                 : fault(r.getDowntimeId());
         List<ReassignmentDetail> rows = detailRepository.findByReportIdOrderByLineIdAsc(r.getReportId());
         int capSum = rows.stream().mapToInt(ReassignmentDetail::getSpareCapacity).sum();

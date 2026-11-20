@@ -115,15 +115,15 @@ public class PlanningService {
         String where = REPORT_FROM + " WHERE r.created_at >= :from AND r.created_at < :to";
         long total = jdbc.queryForObject("SELECT COUNT(*)" + where, p, Long.class);
         List<ReassignmentReportResponse> content = jdbc.query(
-                "SELECT r.report_id, r.downtime_id, e.line_id, d.equipment_id, d.started_at, d.ended_at, r.loss_qty, r.created_at, d.code, r.approved, UPPER(r.kind) AS kind" + where
+                "SELECT r.report_id, r.downtime_id, e.line_id, d.equipment_id, d.started_at, d.ended_at, r.loss_qty, r.created_at, d.code, r.approved, r.kind" + where
                         + " ORDER BY r.created_at DESC, r.report_id DESC LIMIT :limit OFFSET :offset", Sql.paging(p, page, size),
                 (rs, n) -> new ReassignmentReportResponse(rs.getLong("report_id"), rs.getObject("downtime_id", Long.class), rs.getString("line_id"),
                         rs.getString("equipment_id"),
-                        rs.getObject("started_at") == null ? 0   // 목표 변경 보고서는 고장 구간이 없어요
+                        rs.getObject("started_at") == null ? 0   // 고장 건 없는 보고서(target·order)는 고장 구간이 없어요
                                 : Kst.minutes(rs.getObject("started_at", LocalDateTime.class), rs.getObject("ended_at", LocalDateTime.class)),
                         rs.getInt("loss_qty"), Kst.of(rs.getObject("created_at", LocalDateTime.class)),
-                        rs.getString("code") != null ? rs.getString("code") : "TARGET".equals(rs.getString("kind")) ? "TARGET" : null,
-                        rs.getBoolean("approved")));
+                        rs.getString("code") != null ? rs.getString("code") : "target".equals(rs.getString("kind")) ? "TARGET" : null,
+                        rs.getBoolean("approved"), rs.getString("kind")));
         return new PageResponse<>(content, total, page, size);
     }
 

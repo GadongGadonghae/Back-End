@@ -20,3 +20,7 @@ jwt:
 sfaas:
   judge:
     enabled: false              # 1초 판정 스케줄러를 꺼요. 판정은 테스트에서 직접 불러요
+
+# 테스트에서는 실제 Mosquitto에 라인 가동 명령이 나가지 않게, 아무도 없는 포트로 (보내기 실패 = lineCommandSent false)
+mqtt:
+  broker-url: tcp://127.0.0.1:1

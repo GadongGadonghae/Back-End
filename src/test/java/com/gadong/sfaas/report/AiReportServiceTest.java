@@ -16,7 +16,7 @@ class AiReportServiceTest {
     private static final List<String> DEFAULT_STATUSES = List.of("R", "DC", "I");
 
     private static AiReportService service(boolean mock, String baseUrl, String apiKey, int timeoutSeconds) {
-        AiReportProperties properties = new AiReportProperties(mock, baseUrl, apiKey, "test-model", timeoutSeconds, DEFAULT_STATUSES);
+        AiReportProperties properties = new AiReportProperties(mock, "openai", baseUrl, apiKey, "test-model", "low", timeoutSeconds, DEFAULT_STATUSES);
         return new AiReportService(properties, JsonMapper.builder().findAndAddModules().build(), RestClient.builder());
     }
 
