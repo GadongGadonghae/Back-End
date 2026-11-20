@@ -44,3 +44,12 @@ ai:
     timeout-seconds: ${AI_REPORT_TIMEOUT_SECONDS:60}   # LLM 연결·응답 제한 시간 (3.8-flash는 20초 안팎 걸림). 넘으면 템플릿 문장으로 대체
     # 재배정 후보 라인 상태 (RSID). D(고장)·S(계획정지)는 제외. I(대기) 포함 여부는 팀 확정 후 조정
     allocatable-statuses: R,DC,I
+
+# 슬랙 알림 (notify 패키지, N-01 계획수정 보고서 → 슬랙). Incoming Webhook 1개로 보내요
+# 웹훅 주소는 비밀값이라 application-local.yml 의 slack.webhook-url 또는 환경 변수 SLACK_WEBHOOK_URL 에만 넣어요 (Git에 올리지 않아요)
+# 요약은 위 ai.report.* LLM 설정을 그대로 써요. 웹훅 없이 메시지 모양만 볼 때: SLACK_MOCK=true (로그에만 찍힘)
+slack:
+  webhook-url: ${SLACK_WEBHOOK_URL:}
+  mock: ${SLACK_MOCK:false}
+  timeout-seconds: ${SLACK_TIMEOUT_SECONDS:10}
+  app-base-url: ${SLACK_APP_BASE_URL:}   # "보고서 보기" 버튼 주소. 예: http://192.168.203.229 (비우면 버튼 없음)
