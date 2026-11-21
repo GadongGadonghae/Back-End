@@ -43,7 +43,7 @@ public class AiReportService {
     private static final Pattern LINE_PATTERN = Pattern.compile(
             "(?i)(?<![A-Z0-9-])([A-F](?:\\s*[,·/와과및]\\s*[A-F])*)\\s*(?:라인|line)");
     private static final Pattern LINE_LETTER = Pattern.compile("(?i)[A-F]");
-    private static final String SYSTEM_PROMPT = """
+    private static final String BASE_PROMPT = """
             당신은 제조 현장의 생산계획 조정 보고서를 작성하는 전문가다.
             제공된 JSON 사실만 사용하고 값을 추측하지 않는다.
             수량 계산은 서버가 제공한 allocation을 그대로 사용한다.
@@ -51,6 +51,38 @@ public class AiReportService {
             한국어로 간결하게 작성하고 반드시 다음 JSON 형식만 반환한다.
             {"title":"...","summary":"...","actions":["..."],"risks":["..."],"markdown":"..."}
             """;
+    /** 배경 지식 (11/21): resources/ai/system-knowledge.md를 서버가 켜질 때 한 번 읽어 지시문 뒤에 붙여요. 없으면 기본 지시문만 */
+    static final String KNOWLEDGE = loadKnowledge();
+    private static final String SYSTEM_PROMPT = KNOWLEDGE.isEmpty() ? BASE_PROMPT
+            : BASE_PROMPT + "\n아래는 우리 공장과 시스템의 배경 지식이다. 사용자 JSON과 다르면 JSON을 따른다.\n\n" + KNOWLEDGE;
+
+    private static String loadKnowledge() {
+        try (var in = AiReportService.class.getResourceAsStream("/ai/system-knowledge.md")) {
+            if (in == null) {
+                LoggerFactory.getLogger(AiReportService.class).warn("AI 배경 지식 파일(/ai/system-knowledge.md)이 없어 기본 지시문만 씁니다");
+                return "";
+            }
+            String text = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).strip();
+            LoggerFactory.getLogger(AiReportService.class).info("AI 배경 지식 {}자 불러옴 (/ai/system-knowledge.md)", text.length());
+            return text;
+        } catch (java.io.IOException e) {
+            LoggerFactory.getLogger(AiReportService.class).warn("AI 배경 지식을 읽지 못했습니다: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 요청 유형 (배경 지식 6장과 맞물려요). 서버가 넣는 설비 칸 값으로 정해요:
+     * "TARGET" = 목표 변경, "ORDER" = 추가 주문, PT* = 도장 고장, VI = 비전 고장, 그 밖 = 라인 설비 고장
+     */
+    static String requestType(AiReportRequest request) {
+        String eq = request.equipmentId() == null ? "" : request.equipmentId().trim().toUpperCase();
+        if (eq.equals("TARGET")) return "TARGET_CHANGE";
+        if (eq.equals("ORDER")) return "ORDER";
+        if (eq.startsWith("PT")) return "PAINT_FAULT";
+        if (eq.equals("VI")) return "VISION_FAULT";
+        return "LINE_FAULT";
+    }
 
     private final AiReportProperties properties;
     private final ObjectMapper objectMapper;
@@ -231,6 +263,7 @@ public class AiReportService {
         String json;
         try {
             Map<String, Object> facts = new LinkedHashMap<>();
+            facts.put("requestType", requestType(request));
             facts.put("incident", request);
             facts.put("calculatedShortage", shortage);
             facts.put("allocation", allocations);

@@ -85,6 +85,53 @@ public class ReplanService {
     @org.springframework.beans.factory.annotation.Value("${plant.shift-end:24:00}")
     private String shiftEnd = "24:00";
 
+    /** 도장 운영 판단 (11/21): 보고서에 결재 뒤 도장 운영을 적고, 결재하면 함께 적용해요. 없으면(테스트) 건너뛰어요 */
+    private PaintPlanService paintPlan;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPaintPlan(PaintPlanService paintPlan) {
+        this.paintPlan = paintPlan;
+    }
+
+    /** 조치 목록 끝에 "도장 운영: …" 한 줄 (결재 뒤 가동 라인 기준, 바꿀 것이 없으면 그대로) */
+    private List<String> withPaint(List<String> actions, java.util.Collection<String> runningAfter) {
+        if (paintPlan == null || runningAfter == null) return actions;
+        String t = paintPlan.previewText(List.copyOf(runningAfter));
+        if (t == null) return actions;
+        List<String> out = new ArrayList<>(actions == null ? List.of() : actions);
+        out.add(t);
+        return out;
+    }
+
+    /**
+     * 결재·적용 뒤 도장 운영 다시 맞추기 (11/21). 지금 트랜잭션이 확정(커밋)된 뒤 새 트랜잭션으로 적용해요:
+     * 결재가 켜고 끈 라인을 본 다음 판단하고, 도장 쪽이 실패해도 결재는 그대로예요 (로그로만 남겨요).
+     * 돌려주는 문장 = 같은 트랜잭션에서 미리 계산한 "적용할 내용" (응답 notes용)
+     */
+    private List<String> applyPaint(String reason) {
+        if (paintPlan == null) return List.of();
+        String preview = paintPlan.previewText(null);
+        Runnable run = () -> {
+            try {
+                paintPlan.apply(reason);
+            } catch (RuntimeException e) {
+                log.warn("도장 운영 적용 실패 ({}): {}", reason, e.getMessage(), e);
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            run.run();
+                        }
+                    });
+        } else {
+            run.run();
+        }
+        return preview == null ? List.of() : List.of(preview.replace("결재하면 함께 적용합니다.", "적용 직후 함께 맞춥니다."));
+    }
+
     private LocalDateTime shiftEndOf(LocalDate day) {
         return "24:00".equals(shiftEnd) ? day.plusDays(1).atStartOfDay() : day.atTime(java.time.LocalTime.parse(shiftEnd));
     }
@@ -318,7 +365,8 @@ public class ReplanService {
         User user = currentUser();
         ReassignmentReport saved = reportRepository.save(new ReassignmentReport(f.downtimeId(), shortage, now,
                 user == null ? null : user.getUserId(), kind, base, ct, stoppedPlan, stoppedDone, plantTarget,
-                Math.max(0, shortage - assigned), json(new AiContent(title, summaryOt, withOvertime(ai.actions(), ot, "근무 끝 " + shiftEnd), ai.risks(), markdown,
+                Math.max(0, shortage - assigned), json(new AiContent(title, summaryOt, withPaint(withOvertime(ai.actions(), ot, "근무 끝 " + shiftEnd),
+                        "line".equals(kind) && day.equals(now.toLocalDate()) ? rows.stream().map(Row::target).toList() : null), ai.risks(), markdown,
                         ai.model(), ai.mock(), ai.fallbackReason(), request, ai.requestInterpretation(), trace.join(), null))));
         for (Row r : rows) {
             detailRepository.save(new ReassignmentDetail(saved.getReportId(), r.target(), r.capacity(), add.getOrDefault(r.target(), 0),
@@ -520,6 +568,7 @@ public class ReplanService {
             summary = summary + overtimeText(ot, "납기 " + dueAt);
             actions = withOvertime(actions, ot, "납기 " + dueAt);
         }
+        actions = withPaint(actions, rows.keySet());   // 11/21 결재 뒤 가동 라인(지금 가동 + 새로 켤 라인 − 정지 요청) 기준 도장 운영
         OrderInfo order = new OrderInfo(text.isEmpty() ? null : text, addQty, dueAt, setup, List.copyOf(running), List.copyOf(newLines), recommended,
                 idle.stream().filter(l -> !newLines.contains(l)).toList(), List.copyOf(excluded), parsed.parsedBy(), List.copyOf(notes), current, withNew,
                 change == null ? null : change.getBeforeQty(), change == null ? null : change.getAfterQty(), List.copyOf(stopReq));
@@ -619,6 +668,7 @@ public class ReplanService {
         List<String> actions = new ArrayList<>();
         for (String l : stop) actions.add(l + "라인 정지 (남은 계획 " + remain.get(l) + "개 취소, 결재하면 정지 명령)");
         for (String l : keep) if (add.get(l) != 0) actions.add(l + "라인 계획 " + Math.abs(add.get(l)) + "개 " + (add.get(l) < 0 ? "줄임" : "늘림"));
+        actions = withPaint(actions, keep);   // 11/21 남는 라인 기준 도장 운영 (합치면 도장 1대 운휴)
         List<String> risks = List.of("정지한 라인을 다시 켜면 준비 시간(" + DEFAULT_SETUP_MIN + "분)이 걸립니다.",
                 "이미 투입된 재공은 끝까지 처리합니다.");
         OrderInfo info = new OrderInfo(text.isEmpty() ? null : text, -reduce, shiftEnd, 0, List.copyOf(running), List.of(), false, List.of(), List.of(),
@@ -718,6 +768,7 @@ public class ReplanService {
         for (String line : order.newLines()) sent &= lineCommands.send(line, "start");
         if (!order.newLines().isEmpty() && !sent) notes.add("라인 가동 명령을 MQTT 브로커에 보내지 못했습니다. 재생기·설비에서 직접 가동해 주세요 (예: start D)");
         if (order.newLines().isEmpty() && (order.stopLines() == null || order.stopLines().isEmpty())) notes.add("켜거나 멈출 라인이 없어 목표만 바꿨습니다");
+        notes.addAll(applyPaint("보고서 " + documentNo(r) + " 적용"));
         return new ApplyResponse(reportId, Kst.of(now), order.newLines(), ended, changes, !order.newLines().isEmpty() && sent, notes);
     }
 
@@ -778,7 +829,12 @@ public class ReplanService {
         // 추가 주문 배정은 승인과 함께 계획을 바꾸므로 R-06 승인·적용으로만 승인해요 (승인만 하고 적용 안 된 상태를 만들지 않게)
         if ("order".equals(r.getKind())) throw invalid("추가 주문 배정은 '승인하고 적용'(R-06)으로 승인해요");
         User user = currentUser();
-        if (!Boolean.TRUE.equals(r.getApproved())) apply(r, user);
+        if (!Boolean.TRUE.equals(r.getApproved())) {
+            apply(r, user);
+            // 11/21 라인을 멈추거나 켠 뒤 도장 대수·경로 다시 맞추기 (오늘 건만: 지난 날 보고서는 지금 운영과 상관없음)
+            LocalDate repDay = (r.getBaseAt() == null ? r.getCreatedAt() : r.getBaseAt()).toLocalDate();
+            if (repDay.equals(Kst.now().toLocalDate())) applyPaint("보고서 " + documentNo(r) + " 결재");
+        }
         r.approve(user == null ? null : user.getUserId(), Kst.now());
         reportRepository.flush();
         return toResponse(r);
@@ -797,7 +853,7 @@ public class ReplanService {
                     Map.of("pt", f.equipmentId()), String.class)) {
                 monitoringService.changePaintRoute(line, new com.gadong.sfaas.monitoring.dto.MonitoringDtos.PaintRouteRequest(
                         to, "AI 보고서 승인 " + documentNo(r) + " (" + f.equipmentName() + " 고장)"));
-                lineCommands.route(line, to);   // 현장(재생기)에 경로 전환 명령 → 새 도장에서 칠하기 시작 (11/20)
+                // 현장(재생기)에 경로 전환 명령은 M-09(changePaintRoute)가 보내요 (11/21, 한 곳에서만)
             }
             return;
         }

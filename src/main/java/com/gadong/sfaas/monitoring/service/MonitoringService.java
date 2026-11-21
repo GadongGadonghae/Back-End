@@ -79,6 +79,14 @@ public class MonitoringService {
         this.productionStats = productionStats;
     }
 
+    /** 현장에 도장 경로 전환 명령 (MQTT {ctl}/route, 11/21). 테스트처럼 없으면 기록만 해요 */
+    private com.gadong.sfaas.availability.service.LineCommandPublisher lineCommands;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setLineCommands(com.gadong.sfaas.availability.service.LineCommandPublisher lineCommands) {
+        this.lineCommands = lineCommands;
+    }
+
     /** M-01 */
     public List<EquipmentStatusResponse> status(String lineId) {
         masterService.requireLine(lineId);
@@ -266,7 +274,12 @@ public class MonitoringService {
         paintRouteHistoryRepository.save(new PaintRouteHistory(lineId, line.getCurrentPaintId(), paint.getEquipmentId(),
                 request.reason(), now));
         line.changePaint(paint.getEquipmentId());
-        // TODO(MQTT 연동): Q-03 sfaas/cmd/route/{lineId} 로 {lineId, paintId, requestedBy, ts} 를 Node-RED에 보내요
+        lineRepository.flush();   // 11/21 같은 트랜잭션에서 SQL로 경로를 다시 읽는 도장 운영 판단이 새 경로를 보게
+        // 11/21 운휴(계획정지) 중인 도장으로 보내면 그 도장을 다시 켜요 (쉬는 도장에 제품이 쌓이지 않게)
+        jdbc.update("UPDATE downtime_event SET ended_at = :now WHERE equipment_id = :pt AND status = 'S' AND code = 'PL_STANDBY' AND ended_at IS NULL",
+                Map.of("now", now, "pt", paint.getEquipmentId()));
+        // 11/21 현장(재생기·이송 설비)에 경로 전환 명령 (MQTT {ctl}/route). 못 보내도 기록은 남겨요
+        if (lineCommands != null) lineCommands.route(lineId, paint.getEquipmentId());
         return new PaintRouteResponse(lineId, line.getCurrentPaintId(), Kst.of(now));
     }
 
