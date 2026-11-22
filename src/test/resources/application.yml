@@ -12,6 +12,10 @@ spring:
   jackson:
     time-zone: Asia/Seoul       # main application.yml과 같게: 응답 시각에 +09:00
 
+# 웹소켓 허용 화면 주소: main application.yml 기본값과 같게 (이 파일이 main 설정을 가려서 따로 적어요)
+websocket:
+  allowed-origin-patterns: 'http://localhost:[*],http://127.0.0.1:[*],http://192.168.0.*:[*],http://192.168.203.*:[*]'
+
 # 테스트 전용 JWT 설정
 jwt:
   secret: ${JWT_TEST_SECRET:VGhpcy1pcy1hLXRlc3Qtb25seS1qd3Qtc2lnbmluZy1rZXktMzItYnl0ZXMh}
