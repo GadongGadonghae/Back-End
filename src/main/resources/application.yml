@@ -31,7 +31,7 @@ mqtt:
   broker-url: tcp://localhost:1883
   topic-raw: sfaas/raw/#
 
-# AI 계획수정 보고서 (report 패키지). 기본은 Google Gemini 무료 키 (OpenAI 호환, gemini-3.8-flash). 11/19부터 기본은 실제 호출 (mock: false)
+# AI 계획수정 보고서 (report 패키지). 기본은 Google Gemini 무료 키 (OpenAI 호환, gemini-3.5-flash-lite). 11/19부터 기본은 실제 호출 (mock: false)
 # API 키는 application-local.yml 의 ai.report.api-key 또는 환경 변수 AI_REPORT_API_KEY · ANTHROPIC_API_KEY 에 넣어요 (Git에 올리지 않아요)
 # 키가 없거나 호출이 실패하면 템플릿 문장으로 대신 만들고, 보고서 화면에 그 이유(fallbackReason)가 나와요
 # Claude API(Anthropic 공식 Java SDK, 유료 키)를 쓰려면: AI_REPORT_PROVIDER=anthropic, AI_REPORT_MODEL=claude-opus-5-5 (11/20 ai-cause-trace)
@@ -42,12 +42,12 @@ ai:
     provider: ${AI_REPORT_PROVIDER:openai}           # openai = Gemini 등 OpenAI 호환 (기본, 무료 키) · anthropic = Claude
     base-url: ${AI_REPORT_BASE_URL:https://generativelanguage.googleapis.com/v1beta/openai}
     api-key: ${AI_REPORT_API_KEY:${ANTHROPIC_API_KEY:}}
-    model: ${AI_REPORT_MODEL:gemini-3.8-flash}
+    model: ${AI_REPORT_MODEL:gemini-3.5-flash-lite}   # 11/22 실제 지시문으로 재 보니 약 2초 (3.5-flash 20~32초, 3.7·3.8-flash 무응답)
     effort: ${AI_REPORT_EFFORT:low}                     # 생각 깊이 (low · medium · high). Gemini는 reasoning_effort로 보내요 (11/21). 보고서 문장은 사실 정리라 low
     # 첫 모델이 붐비거나(503·429) first-timeout-seconds 안에 답이 없으면 예비 모델을 차례로 불러요 (11/22). 비우면 예비 없음
-    fallback-models: ${AI_REPORT_FALLBACK_MODELS:gemini-3.5-flash,gemini-3.5-flash-lite}
+    fallback-models: ${AI_REPORT_FALLBACK_MODELS:gemini-3.1-flash-lite,gemini-3.5-flash}
     first-timeout-seconds: ${AI_REPORT_FIRST_TIMEOUT_SECONDS:20}
-    timeout-seconds: ${AI_REPORT_TIMEOUT_SECONDS:60}   # LLM 연결·응답 제한 시간 (gemini-3.8-flash는 20초 안팎). 넘으면 템플릿 문장으로 대체
+    timeout-seconds: ${AI_REPORT_TIMEOUT_SECONDS:60}   # LLM 연결·응답 제한 시간 (gemini-3.5-flash-lite는 2~3초). 넘으면 템플릿 문장으로 대체
     # 재배정 후보 라인 상태 (RSID). D(고장)·S(계획정지)는 제외. I(대기) 포함 여부는 팀 확정 후 조정
     allocatable-statuses: R,DC,I
 
