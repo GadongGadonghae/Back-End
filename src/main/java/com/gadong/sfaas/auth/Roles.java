@@ -6,7 +6,7 @@ import java.util.Map;
 /**
  * 계정 권한 (11/20 팀 결정). users.role에 이 코드를 저장하고, 로그인 토큰에 담겨 ROLE_코드로 검사해요.
  * <pre>
- * 기능                         공장장  생산관리팀장  라인 담당자
+ * 기능                         공장장  생산관리 팀장  라인 담당자
  * 1 기록 열람 (조회 API 전부)      O        O           O
  * 2 알람 이력 조치 작성 (U-09)     -        O           O
  * 3 생산 목표 설정 (G-03)          O        -           -
@@ -22,11 +22,11 @@ import java.util.Map;
 public final class Roles {
 
     public static final String PLANT = "PLANT_HEAD";           // 공장장
-    public static final String PRODUCTION = "PROD_LEAD"; // 생산관리팀장
+    public static final String PRODUCTION = "PROD_LEAD"; // 생산관리 팀장
     public static final String LINE = "LINE_WORKER";             // 라인 담당자
     public static final String CAMPUS = "CAMPUS";            // 캠퍼스장 (보기 전용)
 
-    public static final Map<String, String> LABEL = Map.of(PLANT, "공장장", PRODUCTION, "생산관리팀장", LINE, "라인 담당자", CAMPUS, "캠퍼스장");
+    public static final Map<String, String> LABEL = Map.of(PLANT, "공장장", PRODUCTION, "생산관리 팀장", LINE, "라인 담당자", CAMPUS, "캠퍼스장");
     public static final List<String> ALL = List.of(PLANT, PRODUCTION, LINE, CAMPUS);
 
     private Roles() {

@@ -24,7 +24,7 @@ public final class PlanningDtos {
 
     /**
      * G-04 결과. before = 저장 전 라인 목표 합, after = 새 공장 목표. pending = 오늘 목표를 올려서 라인에 아직 안 나눈 수량
-     * (추가 주문 · 배정 대기 → 생산관리팀장이 추가 주문 배정 보고서로 나누고 공장장 결재 때 라인 목표에 들어가요). 아니면 0
+     * (추가 주문 · 배정 대기 → 생산관리 팀장이 추가 주문 배정 보고서로 나누고 공장장 결재 때 라인 목표에 들어가요). 아니면 0
      */
     public record TargetTotalResponse(String date, int before, int after, int pending, Long changeId, List<PlanResponse> lines) {}
 

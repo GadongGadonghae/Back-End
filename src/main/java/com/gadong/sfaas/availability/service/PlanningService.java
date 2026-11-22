@@ -118,7 +118,7 @@ public class PlanningService {
      * <ul>
      *   <li>처음 정하거나 줄이거나 다른 날: 가동 라인(오늘이면 계획정지 중인 라인 빼고)에 똑같이 나눠 저장 (나머지는 앞 라인부터 1개씩)</li>
      *   <li>오늘 목표를 올리면: 라인 목표는 그대로 두고 이전·새 목표를 기록 → 늘어난 수량 = 추가 주문 · 배정 대기.
-     *       생산관리팀장이 추가 주문 배정 보고서로 라인에 나누고, 공장장이 결재하면 라인 목표에 들어가요</li>
+     *       생산관리 팀장이 추가 주문 배정 보고서로 라인에 나누고, 공장장이 결재하면 라인 목표에 들어가요</li>
      * </ul>
      */
     @Transactional
@@ -132,7 +132,7 @@ public class PlanningService {
         boolean today = date.equals(now.toLocalDate());
         // 이전 배정 대기는 이 저장으로 대신해요
         changeRepository.findByTargetDateAndClosedAtIsNullOrderByChangeIdDesc(date).forEach(c -> c.close(now));
-        if (today && before > 0 && after != before) {   // 11/21: 줄일 때도 기록 → 생산관리팀장 보고서(어느 라인을 줄이거나 멈출지) → 결재 때 반영
+        if (today && before > 0 && after != before) {   // 11/21: 줄일 때도 기록 → 생산관리 팀장 보고서(어느 라인을 줄이거나 멈출지) → 결재 때 반영
             TargetChange c = changeRepository.save(new TargetChange(date, before, after, currentUser.id(), now));
             return new TargetTotalResponse(date.toString(), before, after, after - before, c.getChangeId(), current.stream().map(this::plan).toList());
         }

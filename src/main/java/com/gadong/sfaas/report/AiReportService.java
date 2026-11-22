@@ -103,7 +103,8 @@ public class AiReportService {
             List<String> appliedRules = new ArrayList<>(interpretation.appliedRules());
             appliedRules.add("추가 정지 라인의 남은 계획 " + stoppedPlanQty + "개를 재배정 수량에 포함");
             interpretation = new AiReportResponse.RequestInterpretation(
-                    interpretation.excludedLines(), interpretation.stoppedLines(), interpretation.priority(), appliedRules);
+                    interpretation.excludedLines(), interpretation.stoppedLines(), interpretation.priority(), appliedRules,
+                    interpretation.onlyLines(), interpretation.unhandled());
         }
         List<AiReportResponse.Allocation> allocations = allocate(
                 shortage, request.lineId(), request.lineConditions(), new LinkedHashSet<>(interpretation.excludedLines()));
@@ -166,7 +167,23 @@ public class AiReportService {
         else if ("DUE_DATE".equals(priority)) rules.add("납기 준수 우선 검토");
         else rules.add("잔여 생산능력 기준 적용");
         return new AiReportResponse.RequestInterpretation(
-                List.copyOf(excludedLines), List.copyOf(stoppedLines), priority, rules);
+                List.copyOf(excludedLines), List.copyOf(stoppedLines), priority, rules, OrderRequestParser.onlyLines(normalized),
+                unhandled(request));
+    }
+
+    /** 규칙(제외·정지·여기에만 배정·가동·우선) 어디에도 안 걸린 문장. 수량에 반영하지 못했다는 걸 보고서에 밝혀요 (11/22) */
+    static List<String> unhandled(String request) {
+        List<String> out = new ArrayList<>();
+        for (String s : request.split("[.!?\\n;]+")) {
+            String t = s.replaceAll("\\s+", " ").trim();
+            if (t.isEmpty()) continue;
+            boolean ok = t.matches(".*(제외|빼|배정하지|사용하지|금지|정지|중단|멈춰|멈춤|멈추|세워).*") && LINE_PATTERN.matcher(t).find()
+                    || t.matches(".*(안전|품질|납기|긴급|마감).*우선.*")
+                    || !OrderRequestParser.onlyLines(t).isEmpty()
+                    || !OrderRequestParser.rules(t).newLines().isEmpty();
+            if (!ok) out.add(t);
+        }
+        return List.copyOf(out);
     }
 
     private List<AiReportResponse.Allocation> allocate(

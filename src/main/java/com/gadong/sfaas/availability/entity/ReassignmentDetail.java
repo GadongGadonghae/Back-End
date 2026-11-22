@@ -23,7 +23,7 @@ public class ReassignmentDetail {
         this.remainingPlan = remainingPlan;
     }
 
-    /** 생산관리팀장이 배정 수량을 고칠 때 (결재 요청 전, 11/20) */
+    /** 생산관리 팀장이 배정 수량을 고칠 때 (결재 요청 전, 11/20) */
     public void changeAddedQty(int qty) {
         this.addedQty = qty;
     }

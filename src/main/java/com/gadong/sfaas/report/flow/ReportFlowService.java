@@ -32,7 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 보고서 결재·전송 + 임시 MES 수신함 (v0.3.15, MES 명세 docs/api-spec-report-approval-mes.md).
  * <ul>
- *   <li>R-10 작성(생산관리팀장): REPLAN은 기존 계획수정 보고서(R-03, ReplanService)를 만들어 그 내용을 담아요. DAILY는 화면이 계산한 내용을 저장</li>
+ *   <li>R-10 작성(생산관리 팀장): REPLAN은 기존 계획수정 보고서(R-03, ReplanService)를 만들어 그 내용을 담아요. DAILY는 화면이 계산한 내용을 저장</li>
  *   <li>🆕 11/20 상태: 작성 중 DRAFT(AI 보고서를 만들기만 함) → 작성 WRITTEN(작성 완료·결재 요청, R-15) ⇄ 회수(R-16, 결재 전) → 결재 APPROVED → 전송 SENT</li>
  *   <li>R-13 결재(공장장): WRITTEN만. REPLAN이면 계획수정 보고서를 승인하고 현장에 적용 (R-04와 같음)</li>
  *   <li>R-14 전송(공장장): APPROVED만 → SENT. 전송 뒤에는 다시 작성·전송 안 됨 (409)</li>
@@ -103,7 +103,7 @@ public class ReportFlowService {
         return reports.save(r);
     }
 
-    // ── R-15 결재 요청 · R-16 회수 (생산관리팀장, 11/20) ──
+    // ── R-15 결재 요청 · R-16 회수 (생산관리 팀장, 11/20) ──
 
     /** 작성 완료 · 결재 요청: 작성 중(DRAFT)만. content = 그 순간 화면 문서 (임시 MES 열람용, 없으면 그대로) */
     @Transactional
@@ -125,7 +125,7 @@ public class ReportFlowService {
         return toResponse(r, true);
     }
 
-    /** 계획수정 보고서 배정 값 고치기 (생산관리팀장): 결재 요청 전(작성 중)에만 */
+    /** 계획수정 보고서 배정 값 고치기 (생산관리 팀장): 결재 요청 전(작성 중)에만 */
     @Transactional
     public ReassignmentDetailResponse editReplan(long replanId, java.util.Map<String, Integer> addQty) {
         reports.findFirstByReplanReportIdOrderByReportIdDesc(replanId).ifPresent(r -> {

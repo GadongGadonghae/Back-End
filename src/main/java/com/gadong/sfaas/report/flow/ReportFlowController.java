@@ -33,7 +33,7 @@ public class ReportFlowController {
         this.service = service;
     }
 
-    @Operation(summary = "R-10 보고서 작성 (생산관리팀장)",
+    @Operation(summary = "R-10 보고서 작성 (생산관리 팀장)",
             description = "kind = DAILY(targetKey 날짜, content = 일일 보고서 내용) · REPLAN(targetKey 비가동 eventId 또는 TARGET). "
                     + "REPLAN은 계획수정 보고서(R-03)를 만들어 담아요. 같은 kind·targetKey가 작성·결재 상태면 다시 작성(결재 처음부터), 전송됐으면 409")
     @PreAuthorize("hasRole('PROD_LEAD')")
@@ -61,14 +61,14 @@ public class ReportFlowController {
         return service.get(reportId);
     }
 
-    @Operation(summary = "R-15 작성 완료 · 결재 요청 (생산관리팀장)", description = "작성 중(DRAFT)만, 아니면 409. 이때부터 공장장에게 결재 알림. body.content = 그 순간 문서(선택)")
+    @Operation(summary = "R-15 작성 완료 · 결재 요청 (생산관리 팀장)", description = "작성 중(DRAFT)만, 아니면 409. 이때부터 공장장에게 결재 알림. body.content = 그 순간 문서(선택)")
     @PreAuthorize("hasRole('PROD_LEAD')")
     @PostMapping("/reports/{reportId}/request")
     public ReportResponse request(@PathVariable long reportId, @RequestBody(required = false) ReportRequestBody body) {
         return service.request(reportId, body == null ? null : body.content());
     }
 
-    @Operation(summary = "R-16 회수 (생산관리팀장)", description = "결재 요청(WRITTEN)만, 아니면 409. 작성 중(DRAFT)으로 돌아가 값을 고치고 다시 결재 요청")
+    @Operation(summary = "R-16 회수 (생산관리 팀장)", description = "결재 요청(WRITTEN)만, 아니면 409. 작성 중(DRAFT)으로 돌아가 값을 고치고 다시 결재 요청")
     @PreAuthorize("hasRole('PROD_LEAD')")
     @PostMapping("/reports/{reportId}/recall")
     public ReportResponse recall(@PathVariable long reportId) {

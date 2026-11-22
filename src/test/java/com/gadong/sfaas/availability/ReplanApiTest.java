@@ -450,6 +450,64 @@ class ReplanApiTest {
                 "select count(*) from downtime_event where stop_group_id = 82 and ended_at is null", Integer.class)).isEqualTo(1);
     }
 
+    /** "모두 C라인에 배정": C에만 배정하고, 처리 내용과 근거를 보고서에 남겨요 (11/22) */
+    @Test
+    void r03OnlyLineRequest_putsAllOnThatLine_withReason() throws Exception {
+        mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"downtimeId\":10,\"additionalRequest\":\"A라인 고장이므로 A라인에서 생산할 양을 모두 C라인에 배정해줘. 작업자도 늘려줘\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.lossQty").value(98))
+                .andExpect(jsonPath("$.details.length()").value(1))
+                .andExpect(jsonPath("$.details[0].targetLineId").value("C"))
+                .andExpect(jsonPath("$.details[0].addQty").value(98))
+                .andExpect(jsonPath("$.ai.requestInterpretation.onlyLines[0]").value("C"))
+                .andExpect(jsonPath("$.ai.requestInterpretation.appliedRules[0]").value("요청에 따라 부족 98개를 C라인에만 배정 (다른 라인에는 나누지 않음)"))
+                .andExpect(jsonPath("$.ai.requestInterpretation.appliedRules[1]").value("근거: C라인은 근무 끝(24:00)까지 2441개를 더 만들 수 있어, 98개를 근무 안에 모두 생산"))
+                .andExpect(jsonPath("$.ai.requestInterpretation.unhandled[0]").value("작업자도 늘려줘"));
+    }
+
+    /** 시연과 같은 상황: 오늘 A 고장, B 가동, C·D 쉬는 중. 근무 안에 다 못 만드는 양을 "모두 C라인에" → C만 새로 켜고 나머지는 잔업, 근거를 남김 (11/22) */
+    @Test
+    void r03OnlyLineRequest_startsThatIdleLine_andUsesOvertime() throws Exception {
+        String today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Seoul")).toString();
+        String ago = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Seoul")).minusMinutes(5).withNano(0).toString().replace('T', ' ');
+        jdbc.batchUpdate(
+                "insert into line(line_id, line_name, default_paint_id, current_paint_id) values ('D','D라인','PT2','PT2')",
+                "insert into equipment(equipment_id, equipment_name, process_id, line_id, seq_no, is_active) values "
+                        + "('C-PR1','C라인 프레스 1호기','PRESS','C',1,true), ('D-PR1','D라인 프레스 1호기','PRESS','D',1,true)",
+                "insert into downtime_code(code, code_name, is_planned) values ('PL_SHIFT','교대',true)",
+                "insert into downtime_event(downtime_id, equipment_id, status, code, started_at, stop_group_id) values "
+                        + "(30,'A-PR1','D','UP_BREAKDOWN','" + ago + "', null), "
+                        + "(31,'C-PR1','S','PL_SHIFT','" + today + " 00:00:01', 81), (32,'D-PR1','S','PL_SHIFT','" + today + " 00:00:01', 82)",
+                // 준비 30분을 빼면 자정까지 다 못 만들고, 잔업 24시간 안에는 끝나는 양 (자정 직후 몇 분만 빼고 언제 돌려도 같아요)
+                "insert into production_target(target_date, line_id, target_qty, created_at) values "
+                        + "('" + today + "','A',4950,'" + today + " 00:00:00'), ('" + today + "','B',10,'" + today + " 00:00:00')");
+        String body = mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"downtimeId\":30,\"additionalRequest\":\"A라인 고장이므로 A라인에서 생산할 양을 모두 C라인에 배정해줘\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.details.length()").value(1))
+                .andExpect(jsonPath("$.details[0].targetLineId").value("C"))
+                .andExpect(jsonPath("$.details[0].addQty").value(4950))
+                .andExpect(jsonPath("$.overtime.lines.length()").value(1))
+                .andExpect(jsonPath("$.overtime.lines[0].lineId").value("C"))
+                .andExpect(jsonPath("$.ai.requestInterpretation.onlyLines[0]").value("C"))
+                .andExpect(jsonPath("$.ai.requestInterpretation.unhandled.length()").value(0))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body)
+                .contains("요청에 따라 부족 4950개를 C라인에만 배정 (다른 라인에는 나누지 않음)")
+                .contains("근거: C라인은 준비 30분 뒤부터 근무 끝(24:00)까지").contains("개는 잔업으로");
+    }
+
+    /** 고장 난 라인 자신에게 모두 배정하라면 반영하지 못했다고 알리고 원래대로 나눠요 */
+    @Test
+    void r03OnlyLineRequest_onFaultLine_isReportedAsUnhandled() throws Exception {
+        mvc.perform(post("/api/reassignments").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"downtimeId\":10,\"additionalRequest\":\"모두 A라인에 배정해줘\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.details.length()").value(2))
+                .andExpect(jsonPath("$.ai.requestInterpretation.unhandled.length()").value(1));
+    }
+
     @Test
     void g04RaiseTarget_isPendingUntilOrderReportApproved() throws Exception {
         // 오늘 A·B 100씩 가동, C는 계획정지. 공장장이 공장 목표를 200 → 260으로 올림 → 라인 목표는 그대로, 60개 배정 대기 (11/20)

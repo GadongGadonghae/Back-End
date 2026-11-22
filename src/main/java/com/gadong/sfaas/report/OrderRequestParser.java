@@ -163,6 +163,7 @@ public class OrderRequestParser {
 
         // 라인 언급마다 뒤따르는 말로 가동 중·새로 가동·제외를 가려요
         Set<String> running = new LinkedHashSet<>(), added = new LinkedHashSet<>(), excluded = new LinkedHashSet<>();
+        List<String> only = onlyLines(text);
         String norm = RANGE.matcher(text).replaceAll(m -> expand(m.group(1), m.group(2)) + "라인");
         List<java.util.regex.MatchResult> mentions = LINE_LIST.matcher(norm).results().toList();
         for (int i = 0; i < mentions.size(); i++) {
@@ -171,6 +172,7 @@ public class OrderRequestParser {
             ctx = ctx.length() > 25 ? ctx.substring(0, 25) : ctx;
             List<String> ids = Pattern.compile("(?i)[A-F]").matcher(mm.group(1)).results().map(r -> r.group().toUpperCase()).toList();
             if (ctx.matches(".*(제외|빼|쓰지|사용하지).*")) excluded.addAll(ids);
+            else if (only.containsAll(ids)) { /* "E라인에 모두 배정"의 E는 가동 중이라는 말이 아니에요 (11/22) */ }
             else if (ctx.matches(".*(더|추가|새로|켜|돌려|가동).*") && !ctx.matches(".*(돌리고|돌아가|돌리는|가동 중|가동중).*")) added.addAll(ids);
             else running.addAll(ids);
         }
@@ -198,6 +200,37 @@ public class OrderRequestParser {
             }
         }
         return List.copyOf(out);
+    }
+
+    /** 라인 하나 이상: "E라인", "E, F라인", "E라인과 F라인" (적어도 하나는 "라인"이 붙어야 해요) */
+    private static final String LINES_RE = "((?<![A-Za-z0-9-])[A-Fa-f](?:\\s*라인)?(?:\\s*(?:,|·|/|와|과|및|랑|이랑|하고)\\s*[A-Fa-f](?:\\s*라인)?)*)";
+    private static final String TO_RE = "\\s*(?:에게|에다가|에다|에|으로|로|한테|이|가)?";
+    private static final String ALL_RE = "(?:모두|전부|전량|몽땅|통째로|몰아서|몰아|다)";
+    /** 라인 뒤에서 배정하라는 말까지 (그 사이에 빼라·멈추라는 말이 있으면 아님. "A, B라인만 돌리고 있는데"는 지금 상태를 말한 것이라 아님) */
+    private static final String GIVE_RE = "(?:(?!제외|빼|정지|중단|멈|세워|말고|말아|않).){0,25}?(?:배정|할당|맡|몰|넘겨|넘기|돌려(?!고)|돌리(?!고|는)"
+            + "|(?:생산|처리)(?!\\s*(?:하고|하는|되고)\\s*있|\\s*중)|만들(?!고\\s*있))(?!\\s*하?지\\s*(?:말|마|않))";
+    private static final List<Pattern> ONLY = List.of(
+            Pattern.compile(LINES_RE + TO_RE + "\\s*만\\s*" + GIVE_RE),                              // E라인에만 배정
+            Pattern.compile("(?<![가-힣])" + ALL_RE + "\\s+" + LINES_RE + TO_RE + "\\s*" + GIVE_RE),   // 모두 E라인에 배정
+            Pattern.compile(LINES_RE + "\\s*(?:에게|에다가|에다|에|으로|로|한테|이|가)\\s*" + ALL_RE + "\\s*" + GIVE_RE),   // E라인에 모두 배정
+            Pattern.compile(LINES_RE + "\\s*(?:에게|에다가|에다|에|으로|로|한테)\\s*몰아"));              // E라인에 몰아줘
+
+    /**
+     * 요청에서 "여기에만 배정하라"고 한 라인 (11/22): "모두 E라인에 배정", "E라인에 전부 맡겨", "E라인에만 배정", "E, F라인에 몰아줘".
+     * 없으면 빈 목록 (남은 능력 비율대로 나눔)
+     */
+    public static List<String> onlyLines(String text) {
+        if (text == null || text.isBlank()) return List.of();
+        String norm = RANGE.matcher(text.replaceAll("\\s+", " ")).replaceAll(m -> expand(m.group(1), m.group(2)) + "라인");
+        Set<String> out = new LinkedHashSet<>();
+        for (Pattern p : ONLY) {
+            Matcher m = p.matcher(norm);
+            while (m.find()) {
+                if (!m.group(1).contains("라인")) continue;
+                Pattern.compile("[A-Fa-f]").matcher(m.group(1)).results().forEach(r -> out.add(r.group().toUpperCase()));
+            }
+        }
+        return out.stream().sorted().toList();
     }
 
     private static String expand(String a, String b) {

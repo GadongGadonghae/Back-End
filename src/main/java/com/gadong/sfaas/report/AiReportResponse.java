@@ -27,7 +27,15 @@ public record AiReportResponse(
     public record Allocation(String lineId, int quantity, String reason) {
     }
 
+    /**
+     * @param onlyLines 요청으로 이 라인에만 배정 (11/22, 없으면 빈 목록)
+     * @param unhandled 규칙으로 반영하지 못한 요청 문장 (11/22). 예전 보고서는 null
+     */
     public record RequestInterpretation(
-            List<String> excludedLines, List<String> stoppedLines, String priority, List<String> appliedRules) {
+            List<String> excludedLines, List<String> stoppedLines, String priority, List<String> appliedRules,
+            List<String> onlyLines, List<String> unhandled) {
+        public RequestInterpretation(List<String> excludedLines, List<String> stoppedLines, String priority, List<String> appliedRules) {
+            this(excludedLines, stoppedLines, priority, appliedRules, List.of(), List.of());
+        }
     }
 }

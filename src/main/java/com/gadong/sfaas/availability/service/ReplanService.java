@@ -57,7 +57,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>vision: 비전 검사기는 1대뿐이라 대신할 설비가 없어요. 부족 = 공장 목표 − 실적, 전부 미달</li>
  *   <li>나누기: 부족 수량을 남은 능력 비율대로 (내림 후 나머지는 소수점 큰 쪽부터). 계산과 문장은 AiReportService가 해요</li>
  * </ul>
- * target(11/20): 고장 건 없이 오늘 생산 목표 기준. 계획정지(S) 중인 라인의 남은 계획을 가동 중인 라인에 나눠요 (목표 변동 → 생산관리팀장이 작성).
+ * target(11/20): 고장 건 없이 오늘 생산 목표 기준. 계획정지(S) 중인 라인의 남은 계획을 가동 중인 라인에 나눠요 (목표 변동 → 생산관리 팀장이 작성).
  * 만들 때는 제안만 해요. 공장장이 승인(R-04)하면 그때 적용해요: line·target = 라인별 생산 목표, paint = 도장 경로 전환 (11/20).
  */
 @Service
@@ -260,6 +260,8 @@ public class ReplanService {
         int stoppedPlan, stoppedDone;
         List<Row> rows = new ArrayList<>();
         List<String> newLines = new ArrayList<>();   // 고장 라인 보고서: 요청으로 새로 켜는 쉬던 라인 (11/21)
+        List<String> onlyAsk = OrderRequestParser.onlyLines(request);   // "모두 E라인에 배정" (11/22)
+        List<String> only = new ArrayList<>();       // 그중 실제로 배정할 수 있는 라인
         String stoppedKey; // AiReportService에서 빼는 멈춘 쪽 (라인 ID 또는 설비 ID)
         if ("INSPECTION".equals(f.process())) {
             kind = "vision";
@@ -293,12 +295,15 @@ public class ReplanService {
             List<String> startLines = request == null ? List.of() : OrderRequestParser.rules(request).newLines();
             List<String> stopAsk = OrderRequestParser.stopLines(request);   // 정지 요청 라인은 받는 쪽에서 빼요 (AI가 그 몫도 부족으로 셈)
             long newSec = Math.max(0, remainingSec - DEFAULT_SETUP_MIN * 60L);
-            for (String line : jdbc.queryForList("SELECT line_id FROM line WHERE line_id <> :line ORDER BY line_id",
-                    Map.of("line", f.lineId()), String.class)) {
+            List<String> others = jdbc.queryForList("SELECT line_id FROM line WHERE line_id <> :line ORDER BY line_id",
+                    Map.of("line", f.lineId()), String.class);
+            others.stream().filter(l -> onlyAsk.contains(l) && !stopAsk.contains(l) && !(today && downNow(null, l))).forEach(only::add);
+            for (String line : others) {
                 if (today && downNow(null, line)) continue;
                 if (stopAsk.contains(line)) continue;
+                if (!only.isEmpty() && !only.contains(line)) continue;   // 요청한 라인에만 (11/22)
                 if (today && plannedStopNow(line)) {
-                    if (startLines.contains(line)) {
+                    if (startLines.contains(line) || only.contains(line)) {
                         rows.add(new Row(line, 0, capacity(newSec, ct, 0)));
                         newLines.add(line);
                     }
@@ -311,7 +316,7 @@ public class ReplanService {
             //       (가득 돌던 공장이면 나눌 곳이 없어 배정이 0이던 문제). 결재하면 계획정지를 끝내고 가동 명령
             int need = Math.max(0, stoppedPlan - stoppedDone);
             int have = rows.stream().mapToInt(Row::capacity).sum();
-            if (today && have < need) {
+            if (today && have < need && only.isEmpty()) {
                 for (String line : jdbc.queryForList("SELECT line_id FROM line WHERE line_id <> :line ORDER BY line_id",
                         Map.of("line", f.lineId()), String.class)) {
                     if (have >= need) break;
@@ -333,6 +338,20 @@ public class ReplanService {
                 + Math.max(0, stoppedPlan - stoppedDone) + "개를 다 못 만들어, 근무 뒤 잔업으로 " + base.plusSeconds(otEnd).toLocalTime().withSecond(0).withNano(0)
                 + "까지 생산하는 안. availableCapacity는 잔업 끝까지 만들 수 있는 양.";
 
+        // 요청한 라인에만 배정 (11/22): 처리 내용과 근거를 보고서(적용 규칙 · AI 문장)에 남겨요
+        List<String> onlyRules = new ArrayList<>();
+        if (!only.isEmpty()) {
+            int lack = Math.max(0, stoppedPlan - stoppedDone);
+            int inShift = rows.stream().mapToInt(Row::capacity).sum();
+            String names = String.join("·", only) + "라인";
+            onlyRules.add("요청에 따라 부족 " + lack + "개를 " + names + "에만 배정 (다른 라인에는 나누지 않음)");
+            onlyRules.add("근거: " + names + "은 " + (newLines.isEmpty() ? "" : "준비 " + DEFAULT_SETUP_MIN + "분 뒤부터 ") + "근무 끝(" + shiftEnd + ")까지 "
+                    + inShift + "개를 더 만들 수 있어, "
+                    + (otEnd == null ? lack + "개를 근무 안에 모두 생산"
+                    : Math.max(0, lack - inShift) + "개는 잔업으로 " + base.plusSeconds(otEnd).toLocalTime().withSecond(0).withNano(0) + "까지 생산"));
+        }
+        String onlyNote = onlyRules.isEmpty() ? "" : " 사용자 " + String.join(". ", onlyRules) + ". 다른 라인에도 나누자는 말은 쓰지 않음.";
+
         // 원인 추적: 근거는 지금 모으고(트랜잭션 안), 문장(LLM)은 재배정 문장과 동시에 써서 기다리는 시간을 늘리지 않아요.
         // 원인 추적이 실패해도 보고서는 만들어요 (causeTrace = null)
         CompletableFuture<CauseTrace> trace = traceAsync(f.downtimeId());
@@ -346,8 +365,9 @@ public class ReplanService {
                 rows.stream().map(r -> new AiReportRequest.LineCondition(r.target(), CANDIDATE, otCap == null ? r.capacity() : otCap.get(r.target()), r.remainingPlan(),
                         newLines.contains(r.target()) ? "계획정지 중인 라인을 새로 가동 (준비 " + DEFAULT_SETUP_MIN + "분 뒤 생산)" : null)).toList(),
                 note(kind, f, base, remainingSec, ct) + (newLines.isEmpty() ? ""
-                        : " 계획정지 중이던 " + String.join(",", newLines) + "라인을 새로 가동해 함께 나눔 (결재하면 가동 명령). 다른 계획정지 라인에는 나누지 않음.") + otNote,
+                        : " 계획정지 중이던 " + String.join(",", newLines) + "라인을 새로 가동해 함께 나눔 (결재하면 가동 명령). 다른 계획정지 라인에는 나누지 않음.") + otNote + onlyNote,
                 request));
+        AiReportResponse.RequestInterpretation interpretation = withOnly(ai.requestInterpretation(), kind, onlyAsk, only, onlyRules);
         // 템플릿 문장은 lineId 뒤에 "라인"을 붙여서, 도장·비전 보고서는 제목을 설비 이름으로 바꿔요
         String title = ai.title(), markdown = ai.markdown();
         if (ai.mock() && !"line".equals(kind)) {
@@ -367,13 +387,32 @@ public class ReplanService {
                 user == null ? null : user.getUserId(), kind, base, ct, stoppedPlan, stoppedDone, plantTarget,
                 Math.max(0, shortage - assigned), json(new AiContent(title, summaryOt, withPaint(withOvertime(ai.actions(), ot, "근무 끝 " + shiftEnd),
                         "line".equals(kind) && day.equals(now.toLocalDate()) ? rows.stream().map(Row::target).toList() : null), ai.risks(), markdown,
-                        ai.model(), ai.mock(), ai.fallbackReason(), request, ai.requestInterpretation(), trace.join(), null))));
+                        ai.model(), ai.mock(), ai.fallbackReason(), request, interpretation, trace.join(), null))));
         for (Row r : rows) {
             detailRepository.save(new ReassignmentDetail(saved.getReportId(), r.target(), r.capacity(), add.getOrDefault(r.target(), 0),
                     r.remainingPlan()));
         }
         detailRepository.flush();
         return toResponse(saved);
+    }
+
+    /** 해석 결과에 "요청한 라인에만 배정"의 처리 내용·근거를 넣어요. 배정할 수 없는 라인이면 반영하지 못한 요청으로 (11/22) */
+    private static AiReportResponse.RequestInterpretation withOnly(AiReportResponse.RequestInterpretation it, String kind, List<String> asked,
+                                                                   List<String> only, List<String> rules) {
+        if (it == null || asked.isEmpty()) return it;
+        List<String> applied = new ArrayList<>(it.appliedRules());
+        List<String> unhandled = new ArrayList<>(it.unhandled() == null ? List.of() : it.unhandled());
+        if (!only.isEmpty()) {
+            applied.remove("잔여 생산능력 기준 적용");
+            applied.addAll(0, rules);
+        }
+        List<String> cant = asked.stream().filter(l -> !only.contains(l)).toList();
+        if (!cant.isEmpty() && only.isEmpty()) {
+            unhandled.add("line".equals(kind)
+                    ? String.join("·", cant) + "라인에만 배정 (고장 라인이거나 지금 고장·정지 요청이라 받을 수 없어, 받을 수 있는 라인에 나눔)"
+                    : String.join("·", cant) + "라인에만 배정 (공용 설비 고장 보고서라 라인을 지정할 수 없음)");
+        }
+        return new AiReportResponse.RequestInterpretation(it.excludedLines(), it.stoppedLines(), it.priority(), applied, only, unhandled);
     }
 
     private CompletableFuture<CauseTrace> traceAsync(long downtimeId) {
@@ -451,8 +490,9 @@ public class ReplanService {
         List<String> excluded = parsed.excludedLines();
         List<String> down = allLines.stream().filter(l -> downNow(null, l)).toList();
         down.forEach(l -> notes.add(l + "라인은 지금 고장 중이라 뺐습니다"));
+        List<String> onlyAsk = OrderRequestParser.onlyLines(text);   // "모두 E라인에 배정" (11/22)
         List<String> saidRunning = body != null && body.runningLines() != null && !body.runningLines().isEmpty()
-                ? body.runningLines() : parsed.runningLines();
+                ? body.runningLines() : parsed.runningLines().stream().filter(l -> !(onlyAsk.contains(l) && plannedStopNow(l))).toList();
         List<String> running = new ArrayList<>();
         List<String> idle = new ArrayList<>();
         for (String l : allLines) {
@@ -470,6 +510,17 @@ public class ReplanService {
             else notes.add(l + "라인은 고장 중이거나 제외라서 새로 켤 수 없습니다");
         }
 
+        // 11/22 요청한 라인에만 배정: 쉬는 라인이면 새로 켜고, 다른 라인에는 나누지 않아요
+        List<String> stopSaid = OrderRequestParser.stopLines(text);
+        List<String> only = onlyAsk.stream().filter(l -> (running.contains(l) || idle.contains(l)) && !stopSaid.contains(l)).toList();
+        if (!only.isEmpty()) {
+            for (String l : only) if (idle.contains(l) && !newLines.contains(l)) newLines.add(l);
+            newLines.retainAll(only);
+            notes.add("요청에 따라 " + String.join("·", only) + "라인에만 배정했습니다 (다른 라인에는 나누지 않음)");
+        } else if (!onlyAsk.isEmpty()) {
+            notes.add(String.join("·", onlyAsk) + "라인은 고장·제외·정지라 받을 수 없어, 받을 수 있는 라인에 나눴습니다");
+        }
+
         // 11/21 정지 요청 ("D라인 정지"): 가동 라인에서 빼고 그 라인 남은 계획까지 다른 라인이 맡아요. 결재하면 정지 명령
         List<String> stopReq = OrderRequestParser.stopLines(text).stream().filter(running::contains).toList();
         Map<String, Integer> stopRemain = new LinkedHashMap<>();
@@ -481,21 +532,22 @@ public class ReplanService {
         int moveQty = stopRemain.values().stream().mapToInt(Integer::intValue).sum();
         if (running.isEmpty() && newLines.isEmpty() && idle.isEmpty()) throw invalid("정지하면 남는 가동 라인이 없습니다");
         Map<String, Row> rows = new LinkedHashMap<>();
-        for (String l : running) {
+        List<String> sharing = only.isEmpty() ? running : running.stream().filter(only::contains).toList();   // 나눠 받을 가동 라인
+        for (String l : sharing) {
             int remainingPlan = Math.max(0, targets.getOrDefault(l, 0) - done(day, now, l, null));
             rows.put(l, new Row(l, remainingPlan, capacity(remainingSec, ct, remainingPlan)));
         }
         int currentCap = rows.values().stream().mapToInt(Row::capacity).sum();
         // 11/21 지금 속도로 근무 끝까지 기존 계획도 못 채우는 수 (라인마다 남은 계획 − 근무 끝까지 만들 수 있는 수)
         int backlog = 0;
-        for (String l : running) {
+        for (String l : sharing) {
             int rp = rows.get(l).remainingPlan();
             backlog += Math.max(0, rp - (int) Math.floor(remainingSec / ct.doubleValue()));
         }
         int need = addQty + moveQty + backlog;   // 새 라인을 고를 때: 추가 주문 + 정지 라인 몫 + 기존 계획 부족분
         long newSec = Math.max(0, remainingSec - setup * 60L);
         boolean recommended = false;
-        if (newLines.isEmpty()) {
+        if (newLines.isEmpty() && only.isEmpty()) {
             // 라인을 정하지 않음: "N라인 더"면 그 수만큼, 아니면 모자랄 때만 쉬는 라인을 A부터 더해요
             int want = parsed.addLineCount() != null ? parsed.addLineCount() : 0;
             int cap = currentCap;
@@ -527,6 +579,13 @@ public class ReplanService {
         List<OtLine> otLines = rows.values().stream().map(r -> new OtLine(r.target(), newLines.contains(r.target()) ? orderSetupSec : 0, r.remainingPlan())).toList();
         Long otEnd = overtimeEnd(otLines, addQty + moveQty, ct, remainingSec);
         Map<String, Integer> otCap = otEnd == null ? null : capAt(otLines, otEnd, ct.doubleValue());
+        if (!only.isEmpty()) {
+            int inTime = Math.max(0, withCap);
+            notes.add("근거: " + String.join("·", only) + "라인은 납기 " + dueAt + "까지 " + inTime + "개를 더 만들 수 있어, "
+                    + (otEnd == null ? (addQty + moveQty) + "개를 납기 안에 모두 생산"
+                    : Math.max(0, addQty + moveQty - inTime) + "개는 잔업으로 " + now.plusSeconds(otEnd).toLocalTime().withSecond(0).withNano(0) + "까지 생산"));
+            note += " 사용자 요청에 따라 " + String.join("·", only) + "라인에만 배정함. 다른 라인에도 나누자는 말은 쓰지 않음.";
+        }
         if (otEnd != null) note += " 납기(" + dueAt + ")까지 능력으로는 다 못 만들어 잔업으로 " + now.plusSeconds(otEnd).toLocalTime().withSecond(0).withNano(0)
                 + "까지 생산하는 안. availableCapacity는 잔업 끝까지 만들 수 있는 양.";
         AiReportResponse ai = aiReportService.generate(new AiReportRequest(
@@ -787,7 +846,7 @@ public class ReplanService {
         };
     }
 
-    // ── R-07 배정 값 고치기 (생산관리팀장, 결재 요청 전) ──
+    // ── R-07 배정 값 고치기 (생산관리 팀장, 결재 요청 전) ──
 
     /**
      * 보고서의 라인별 추가 배정 수량을 사람이 고쳐요 (11/20). 승인된 보고서는 못 고쳐요.

@@ -75,7 +75,7 @@ public class PlanningController {
     @Operation(summary = "G-04 공장 목표 저장 (공장장)",
             description = "quantity = 그날 공장 전체 목표. 처음 정하거나 줄이거나 다른 날이면 가동 라인(오늘은 계획정지 라인 빼고)에 똑같이 나눠 저장. "
                     + "오늘 목표를 올리면 라인 목표는 그대로 두고 이전·새 목표를 기록 → 늘어난 수량은 추가 주문 · 배정 대기(pending, G-05). "
-                    + "생산관리팀장이 추가 주문 배정 보고서(R-05, targetChangeId)로 나누고 공장장이 결재하면 라인 목표에 들어가요")
+                    + "생산관리 팀장이 추가 주문 배정 보고서(R-05, targetChangeId)로 나누고 공장장이 결재하면 라인 목표에 들어가요")
     @PreAuthorize("hasRole('PLANT_HEAD')")
     @PutMapping("/production/plans/{date}/total")
     public TargetTotalResponse setTotal(@PathVariable @DateTimeFormat(pattern = DATE) LocalDate date, @RequestBody TargetTotalRequest request) {
@@ -89,7 +89,7 @@ public class PlanningController {
         return p == null ? org.springframework.http.ResponseEntity.noContent().build() : org.springframework.http.ResponseEntity.ok(p);
     }
 
-    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. code = 고장 사유 코드. 보고서는 R-03으로 만들고(생산관리팀장), R-04로 공장장이 승인(결재)해요. approved = 승인 여부.")
+    @Operation(summary = "R-01 재배정 보고서 목록", description = "P1. reassignment_report 조회, createdAt 최신순. code = 고장 사유 코드. 보고서는 R-03으로 만들고(생산관리 팀장), R-04로 공장장이 승인(결재)해요. approved = 승인 여부.")
     @GetMapping("/reassignments")
     public PageResponse<ReassignmentReportResponse> reports(@RequestParam @DateTimeFormat(pattern = DATE) LocalDate from,
                                                             @RequestParam @DateTimeFormat(pattern = DATE) LocalDate to,
@@ -111,7 +111,7 @@ public class PlanningController {
                     + "오늘 고장이면 지금 기준, 지난 날이면 고장 시작 기준. 누를 때마다 새 보고서예요. "
                     + "additionalRequest(선택, 500자): \"A라인은 제외\", \"F라인 정지\", \"납기 우선\" 등 → 제외·정지 라인은 배정에서 빠지고 해석 결과는 ai.requestInterpretation. "
                     + "AI 문장은 키가 없거나 실패하면 템플릿(ai.mock=true, ai.fallbackReason). 계획은 제안만 하고 바꾸지 않아요.")
-    @PreAuthorize("hasRole('PROD_LEAD')") // AI 리포트 작성 = 생산관리팀장만 (11/20)
+    @PreAuthorize("hasRole('PROD_LEAD')") // AI 리포트 작성 = 생산관리 팀장만 (11/20)
     @PostMapping("/reassignments")
     @ResponseStatus(HttpStatus.CREATED)
     public ReassignmentDetailResponse createReport(@RequestBody ReassignmentCreateRequest request) {
@@ -137,7 +137,7 @@ public class PlanningController {
                     + "request(500자): \"지금 A~D 4개 라인만 돌리는데 추가 주문 300개 들어왔어. 오늘 안에 끝내야 하니 한 라인 더 가동해줘\" → AI가 조건으로 해석 "
                     + "(키가 없거나 실패하면 규칙 해석, 말에 없는 라인은 버림). addQty·dueAt(HH:mm)·runningLines·newLines·setupMinutes를 주면 해석보다 우선. "
                     + "결과의 ai.order에 해석 조건과 '지금 라인만 / 새 라인까지' 비교가 있어요. 만들기만 하고 계획은 R-06 승인·적용 때 바꿔요.")
-    @PreAuthorize("hasRole('PROD_LEAD')") // AI 리포트 작성 = 생산관리팀장
+    @PreAuthorize("hasRole('PROD_LEAD')") // AI 리포트 작성 = 생산관리 팀장
     @PostMapping("/reassignments/orders")
     @ResponseStatus(HttpStatus.CREATED)
     public ReassignmentDetailResponse createOrderReport(@RequestBody OrderCreateRequest request) {
@@ -146,7 +146,7 @@ public class PlanningController {
         return r;
     }
 
-    @Operation(summary = "R-07 배정 값 고치기 (생산관리팀장)",
+    @Operation(summary = "R-07 배정 값 고치기 (생산관리 팀장)",
             description = "결재 요청 전(작성 중)에만. body = {\"A\": 120, \"B\": 80} 라인별 추가 배정 수량(0 이상, 배정 표에 있는 라인만). "
                     + "고친 뒤 R-02 모양으로 줘요. 결재(승인)하면 고친 수량대로 목표에 들어가요. 결재 요청 중이면 409 (회수 R-16 뒤 고치기)")
     @PreAuthorize("hasRole('PROD_LEAD')")

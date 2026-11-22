@@ -46,6 +46,45 @@ class OrderRequestParserTest {
     }
 
     @Test
+    void 여기에만_배정하라는_라인을_읽는다() {
+        assertThat(OrderRequestParser.onlyLines("C라인 고장이므로 C라인에서 생산할 양을 모두 E라인에 배정해줘")).containsExactly("E");
+        assertThat(OrderRequestParser.onlyLines("부족한 수량 전부 E라인으로 돌려줘")).containsExactly("E");
+        assertThat(OrderRequestParser.onlyLines("E라인에 전부 맡겨줘")).containsExactly("E");
+        assertThat(OrderRequestParser.onlyLines("E라인에만 배정해줘")).containsExactly("E");
+        assertThat(OrderRequestParser.onlyLines("E라인만 추가로 생산해")).containsExactly("E");
+        assertThat(OrderRequestParser.onlyLines("e라인에 몰아줘")).containsExactly("E");
+        assertThat(OrderRequestParser.onlyLines("E, F라인에만 배정해줘")).containsExactly("E", "F");
+        assertThat(OrderRequestParser.onlyLines("E라인과 F라인에 모두 배정")).containsExactly("E", "F");
+        assertThat(OrderRequestParser.onlyLines("C라인 물량을 다 E라인이 맡아줘")).containsExactly("E");
+    }
+
+    @Test
+    void 빼라_멈추라는_말은_여기에만_배정이_아니다() {
+        assertThat(OrderRequestParser.onlyLines("A라인만 제외하고 배정해줘")).isEmpty();
+        assertThat(OrderRequestParser.onlyLines("E라인에만 배정하지 말고 나눠줘")).isEmpty();
+        assertThat(OrderRequestParser.onlyLines("A라인은 제외하고 F라인 정지, 납기 우선")).isEmpty();
+        assertThat(OrderRequestParser.onlyLines("지금 A~D 4개 라인만 돌리고 있는데 추가 주문 300개 들어왔어. 한 라인 더 돌려줘")).isEmpty();
+        assertThat(OrderRequestParser.onlyLines("D라인 정지하고 재배정해")).isEmpty();
+        assertThat(OrderRequestParser.onlyLines("지금 A·B 라인만 돌리고 있는데 추가 주문 300개 들어왔어. 한 라인 더 가동해줘")).isEmpty();
+        assertThat(OrderRequestParser.onlyLines("지금 A라인만 생산하고 있어")).isEmpty();
+        assertThat(OrderRequestParser.onlyLines("E라인 가동해서 재배정해줘")).isEmpty();
+        assertThat(OrderRequestParser.onlyLines(null)).isEmpty();
+    }
+
+    @Test
+    void 모두_배정의_라인은_가동_중으로_보지_않는다() {
+        OrderRequestParser.Parsed p = OrderRequestParser.rules("추가 주문 100개를 모두 E라인에 배정해줘");
+        assertThat(p.runningLines()).isEmpty();
+        assertThat(p.addQty()).isEqualTo(100);
+    }
+
+    @Test
+    void 규칙에_없는_요청은_반영하지_못했다고_알린다() {
+        assertThat(AiReportService.unhandled("모두 E라인에 배정해줘. 작업자를 두 명 더 넣어줘")).containsExactly("작업자를 두 명 더 넣어줘");
+        assertThat(AiReportService.unhandled("A라인은 제외하고 납기 우선으로")).isEmpty();
+    }
+
+    @Test
     void 수량이_없으면_알려_준다() {
         OrderRequestParser.Parsed p = OrderRequestParser.rules("한 라인 더 돌려줘");
 

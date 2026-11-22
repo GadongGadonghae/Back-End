@@ -114,7 +114,7 @@ public class AvailabilityController {
 
     @Operation(summary = "U-09 비가동 사유·조치 담당자·메모 입력/수정",
             description = "P2. 보낸 값만 바꿔요. 조치 담당자는 번호(actionUserId)로 받아요. 응답은 바뀐 뒤의 비가동 1건 전체(U-08 items와 같은 모양, memo·actionUserName 포함, 11/19)")
-    @PreAuthorize("hasAnyRole('PROD_LEAD', 'LINE_WORKER')") // 조치 작성 = 생산관리팀장·라인 담당자 (11/20)
+    @PreAuthorize("hasAnyRole('PROD_LEAD', 'LINE_WORKER')") // 조치 작성 = 생산관리 팀장·라인 담당자 (11/20)
     @PatchMapping("/downtime/events/{eventId}")
     public DowntimeEventResponse updateDowntimeEvent(@PathVariable long eventId,
                                                            @RequestBody DowntimeEventUpdateRequest request) {

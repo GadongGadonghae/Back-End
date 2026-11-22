@@ -27,7 +27,7 @@ public class PaintPlanController {
         return service.plan();
     }
 
-    /** 경로·도장 운휴는 설비 운영 판단이라 공장장·생산관리팀장 (생산 목표는 바꾸지 않음) */
+    /** 경로·도장 운휴는 설비 운영 판단이라 공장장·생산관리 팀장 (생산 목표는 바꾸지 않음) */
     @Operation(summary = "P-02 도장 운영 제안 적용", description = "적용하는 순간 다시 계산해서 경로 전환 · 도장 운휴(계획정지) · 다시 가동")
     @PreAuthorize("hasAnyRole('PLANT_HEAD', 'PROD_LEAD')")
     @PostMapping("/plan/apply")

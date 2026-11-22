@@ -18,7 +18,7 @@ public class AiReportController {
         this.service = service;
     }
 
-    @PreAuthorize("hasRole('PROD_LEAD')") // AI 리포트 작성 = 생산관리팀장만 (11/20)
+    @PreAuthorize("hasRole('PROD_LEAD')") // AI 리포트 작성 = 생산관리 팀장만 (11/20)
     @PostMapping("/generate")
     @ResponseStatus(HttpStatus.CREATED)
     public AiReportResponse generate(@Valid @RequestBody AiReportRequest request) {

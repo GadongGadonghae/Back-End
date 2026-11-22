@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * 공장 목표 변경 기록 (11/20, v0.3.16). 공장장이 오늘 목표를 올리면 이전·새 목표를 남겨요.
- * 늘어난 수량(after − 라인 목표 합)은 "추가 주문 · 배정 대기"로, 생산관리팀장이 추가 주문 배정 보고서로 라인에 나누고
+ * 늘어난 수량(after − 라인 목표 합)은 "추가 주문 · 배정 대기"로, 생산관리 팀장이 추가 주문 배정 보고서로 라인에 나누고
  * 공장장이 결재하면 라인 목표에 들어가요 (그때 closedAt). 같은 날 다시 올리면 이전 기록은 닫고 새로 남겨요.
  */
 @Entity @Table(name = "target_change") @Getter @NoArgsConstructor
