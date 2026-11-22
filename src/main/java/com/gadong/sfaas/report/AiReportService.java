@@ -1,16 +1,9 @@
 package com.gadong.sfaas.report;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.models.messages.Message;
@@ -86,18 +79,14 @@ public class AiReportService {
 
     private final AiReportProperties properties;
     private final ObjectMapper objectMapper;
-    private final RestClient restClient;
+    private final LlmClient llm;
     /** Claude API 클라이언트 (provider=anthropic 이고 키가 있을 때만, 처음 부를 때 만들어요) */
     private volatile AnthropicClient anthropicClient;
 
-    public AiReportService(AiReportProperties properties, ObjectMapper objectMapper, RestClient.Builder builder) {
+    public AiReportService(AiReportProperties properties, ObjectMapper objectMapper, LlmClient llm) {
         this.properties = properties;
         this.objectMapper = objectMapper;
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        Duration timeout = Duration.ofSeconds(properties.timeoutSeconds() > 0 ? properties.timeoutSeconds() : 30);
-        requestFactory.setConnectTimeout(timeout);
-        requestFactory.setReadTimeout(timeout);
-        this.restClient = builder.baseUrl(properties.baseUrl()).requestFactory(requestFactory).build();
+        this.llm = llm;
     }
 
     public AiReportResponse generate(AiReportRequest request) {
@@ -119,12 +108,15 @@ public class AiReportService {
         List<AiReportResponse.Allocation> allocations = allocate(
                 shortage, request.lineId(), request.lineConditions(), new LinkedHashSet<>(interpretation.excludedLines()));
         Draft draft;
+        String model = properties.model();
         String fallbackReason = null;
         if (properties.mock()) {
             draft = mockDraft(request, shortage, allocations);
         } else {
             try {
-                draft = callLlm(request, shortage, allocations);
+                Drafted drafted = callLlm(request, shortage, allocations);
+                draft = drafted.draft();
+                model = drafted.model();
             } catch (LlmUnavailableException e) {
                 // 수량 계산은 이미 끝났으므로 문장만 템플릿으로 대신 만든다 (보고서 생성 자체는 실패시키지 않음)
                 log.warn("LLM 보고서 생성 실패, 템플릿으로 대체합니다: {}", e.getMessage(), e.getCause());
@@ -136,7 +128,7 @@ public class AiReportService {
 
         return new AiReportResponse(
                 UUID.randomUUID().toString(), request.downtimeId(), OffsetDateTime.now(KST).truncatedTo(ChronoUnit.SECONDS),
-                usedTemplate ? "mock-template" : properties.model(), usedTemplate, fallbackReason,
+                usedTemplate ? "mock-template" : model, usedTemplate, fallbackReason,
                 shortage, draft.title(), draft.summary(), draft.actions(), allocations, draft.risks(), draft.markdown(), interpretation);
     }
 
@@ -259,24 +251,24 @@ public class AiReportService {
         return new Draft(request.lineId() + "라인 생산계획 수정 제안", summary, actions, risks, markdown);
     }
 
-    private Draft callLlm(AiReportRequest request, int shortage, List<AiReportResponse.Allocation> allocations) {
-        String json;
+    private Drafted callLlm(AiReportRequest request, int shortage, List<AiReportResponse.Allocation> allocations) {
+        LlmClient.Reply reply;
         try {
             Map<String, Object> facts = new LinkedHashMap<>();
             facts.put("requestType", requestType(request));
             facts.put("incident", request);
             facts.put("calculatedShortage", shortage);
             facts.put("allocation", allocations);
-            json = chatJson(SYSTEM_PROMPT, objectMapper.writeValueAsString(facts));
+            reply = chat(SYSTEM_PROMPT, objectMapper.writeValueAsString(facts));
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             throw new LlmUnavailableException("보고서 사실 데이터를 만들지 못했습니다", e);
         }
         try {
-            Draft draft = objectMapper.readValue(json, Draft.class);
+            Draft draft = objectMapper.readValue(reply.text(), Draft.class);
             if (isBlank(draft.title()) || isBlank(draft.summary()) || draft.actions() == null || draft.risks() == null) {
                 throw new LlmUnavailableException("LLM 응답 형식이 올바르지 않습니다", null);
             }
-            return draft;
+            return new Drafted(draft, reply.model());
         } catch (LlmUnavailableException e) {
             throw e;
         } catch (Exception e) {
@@ -289,58 +281,16 @@ public class AiReportService {
         return properties.mock();
     }
 
-    String modelName() {
-        return properties.model();
-    }
-
     /**
      * LLM에 시스템 지시와 사용자 내용을 보내고 JSON 본문(문자열)을 받아요. ```json 으로 감싸 오면 벗겨 내요 (Gemini 등).
      * 키 없음·호출 실패·시간 초과는 LlmUnavailableException (호출한 쪽이 템플릿으로 대신해요)
      */
-    String chatJson(String systemPrompt, String userContent) {
+    LlmClient.Reply chat(String systemPrompt, String userContent) {
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {
             throw new LlmUnavailableException("AI_REPORT_API_KEY가 설정되지 않았습니다", null);
         }
-        if (properties.anthropic()) return stripFence(claudeJson(systemPrompt, userContent));
-        try {
-            Map<String, Object> body = Map.of(
-                    "model", properties.model(),
-                    "reasoning_effort", geminiEffort(properties.effort()),   // 11/21 Gemini 생각 깊이 (기본 low: 사실 정리라 빠르게, 안 주면 깊게 생각해서 1분 넘게 걸림)
-                    "temperature", 0.2,
-                    "response_format", Map.of("type", "json_object"),
-                    "messages", List.of(
-                            Map.of("role", "system", "content", systemPrompt),
-                            Map.of("role", "user", "content", userContent)));
-
-            String raw = null;
-            // 503(사용량 폭주)·429(요청 한도)는 잠깐 뒤에 풀리는 경우가 많아 1초·2초 쉬고 두 번까지 다시 불러요
-            for (int attempt = 0; ; attempt++) {
-                try {
-                    raw = restClient.post()
-                            .uri("/chat/completions")
-                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiKey())
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body(body)
-                            .retrieve()
-                            .body(String.class);
-                    break;
-                } catch (HttpServerErrorException.ServiceUnavailable | HttpClientErrorException.TooManyRequests e) {
-                    if (attempt >= 2) throw new LlmUnavailableException("LLM 서버가 바빠 응답하지 않았습니다 (" + e.getStatusCode().value() + "), 잠시 뒤 다시 만들어 주세요", e);
-                    log.info("LLM {} 응답, {}초 뒤 다시 시도합니다", e.getStatusCode().value(), attempt + 1);
-                    Thread.sleep(1000L * (attempt + 1));
-                }
-            }
-            JsonNode content = objectMapper.readTree(raw).path("choices").path(0).path("message").path("content");
-            return stripFence(content.asText());
-        } catch (LlmUnavailableException e) {
-            throw e;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new LlmUnavailableException("LLM 호출이 중단되었습니다", e);
-        } catch (Exception e) {
-            // 키·응답 본문이 섞일 수 있어 원인 메시지는 로그에만 남기고 화면에는 일반 문구만 보낸다
-            throw new LlmUnavailableException("LLM 호출에 실패했거나 " + properties.timeoutSeconds() + "초 안에 응답하지 않았습니다", e);
-        }
+        if (properties.anthropic()) return new LlmClient.Reply(LlmClient.stripFence(claudeJson(systemPrompt, userContent)), properties.model());
+        return llm.chat(systemPrompt, userContent);
     }
 
     /**
@@ -400,11 +350,6 @@ public class AiReportService {
         };
     }
 
-    /** ```json ... ``` 으로 감싸 오면 벗겨 내요 */
-    private static String stripFence(String text) {
-        return text.trim().replaceAll("(?s)^```(?:json)?\\s*(.*?)\\s*```$", "$1");
-    }
-
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
@@ -412,16 +357,14 @@ public class AiReportService {
     private record Draft(String title, String summary, List<String> actions, List<String> risks, String markdown) {
     }
 
+    /** 문장과 실제로 답한 모델 (예비 모델일 수 있어요) */
+    private record Drafted(Draft draft, String model) {
+    }
+
     /** LLM 을 쓸 수 없을 때(키 없음·호출 실패·시간 초과·응답 형식 오류). 템플릿으로 대체하는 신호로만 쓴다. */
     static class LlmUnavailableException extends RuntimeException {
         LlmUnavailableException(String message, Throwable cause) {
             super(message, cause);
         }
-    }
-
-    /** Gemini(OpenAI 호환) reasoning_effort: low · medium · high 만 받아요. 그 밖의 값은 low (11/21) */
-    static String geminiEffort(String effort) {
-        String e = effort == null ? "" : effort.trim().toLowerCase();
-        return e.equals("medium") || e.equals("high") ? e : "low";
     }
 }

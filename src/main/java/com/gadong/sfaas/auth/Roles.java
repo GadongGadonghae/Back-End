@@ -14,6 +14,7 @@ import java.util.Map;
  * 5 사용자 관리 (C-02·C-03)        O        -           -
  * 6 AI 리포트 작성 (R-03)          -        O           -
  *   AI 리포트 승인·결재 (R-04)     O        -           -
+ *   보고서 슬랙 전송 (N-01)         O        O           -
  * 캠퍼스장(CAMPUS, 11/20): 기록 열람만 (보기 전용, /mes 새 프론트에서 보고서 확인)
  * </pre>
  * 컨트롤러에 @PreAuthorize("hasRole('…')")로 걸어요. 권한이 없으면 403 FORBIDDEN.

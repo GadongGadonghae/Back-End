@@ -90,6 +90,9 @@ public final class MonitoringDtos {
         public record CoilReceiptItem(String materialId, OffsetDateTime receivedAt, int productQty) {}
     }
 
+    /** M-18 슬리팅 앞 코일 재고 추이 한 점 (11/22). rolls = qty ÷ 20, 소수 1자리 */
+    public record CoilTrendPoint(OffsetDateTime at, int qty, double rolls) {}
+
     /** M-17 공장 안 제품 위치 (3D 물류). 입고 뒤·출고 전, 공정 불량(폐기)은 빼요 */
     public record FlowPositionsResponse(OffsetDateTime at, List<ProductPosition> products) {
         /** equipmentId(설비 안 처리 중)와 pile(공정 사이 재공) 중 하나만 값이 있어요 */

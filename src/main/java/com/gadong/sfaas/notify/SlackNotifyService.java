@@ -62,7 +62,7 @@ public class SlackNotifyService {
         Incident incident = report.downtimeId() == null ? null : incident(report.downtimeId());
         ReportSummarizer.Summary summary = summarizer.summarize(report, incident);
         Map<String, Object> payload = SlackMessageBuilder.build(report, incident, summary, currentUserName(),
-                properties.appBaseUrl(), Kst.now());
+                AppAddress.resolve(properties.appBaseUrl()), Kst.now());
 
         if (properties.mock()) {
             log.info("[slack.mock] 보고서 {} 슬랙 메시지 (보내지 않음):\n{}", reportId, toJson(payload));

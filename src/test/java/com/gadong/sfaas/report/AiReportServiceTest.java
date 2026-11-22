@@ -16,8 +16,9 @@ class AiReportServiceTest {
     private static final List<String> DEFAULT_STATUSES = List.of("R", "DC", "I");
 
     private static AiReportService service(boolean mock, String baseUrl, String apiKey, int timeoutSeconds) {
-        AiReportProperties properties = new AiReportProperties(mock, "openai", baseUrl, apiKey, "test-model", "low", timeoutSeconds, DEFAULT_STATUSES);
-        return new AiReportService(properties, JsonMapper.builder().findAndAddModules().build(), RestClient.builder());
+        AiReportProperties properties = new AiReportProperties(mock, "openai", baseUrl, apiKey, "test-model", "low", timeoutSeconds, DEFAULT_STATUSES, List.of(), 0);
+        var mapper = JsonMapper.builder().findAndAddModules().build();
+        return new AiReportService(properties, mapper, new LlmClient(properties, mapper, RestClient.builder()));
     }
 
     /** B라인 프레스 3호기 고장, 나머지 라인은 명세서 상태값으로 */

@@ -61,6 +61,18 @@ class CoilApiTest {
                 .andExpect(jsonPath("$.receipts[0].productQty").value(20));
     }
 
+    /** 전날 남은 19개에서 시작 → 08:00 두 롤 입고(+40) → 투입 6개 → 53개 (M-16 재고와 같음) */
+    @Test
+    void coilTrend_startsWithCarryoverAndEndsAtStock() throws Exception {
+        mvc.perform(get("/api/coil/trend").param("date", "2026-11-10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].at").value("2026-11-10T00:00:00+09:00"))
+                .andExpect(jsonPath("$[0].qty").value(19))
+                .andExpect(jsonPath("$[?(@.qty == 59)].rolls").value(org.hamcrest.Matchers.hasItem(3.0)))
+                .andExpect(jsonPath("$[-1:].qty").value(53))
+                .andExpect(jsonPath("$[-1:].rolls").value(2.7));
+    }
+
     @Test
     void coilToday_emptyDay() throws Exception {
         mvc.perform(get("/api/coil/today").param("date", "2026-11-08"))

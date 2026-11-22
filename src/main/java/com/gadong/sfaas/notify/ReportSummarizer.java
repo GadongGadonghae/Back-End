@@ -5,18 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gadong.sfaas.availability.dto.PlanningDtos.ReassignmentDetailResponse;
 import com.gadong.sfaas.global.util.Kst;
 import com.gadong.sfaas.report.AiReportProperties;
-import java.time.Duration;
+import com.gadong.sfaas.report.LlmClient;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
 /**
  * 계획수정 보고서를 슬랙용 3줄로 요약해요.
@@ -42,16 +38,12 @@ public class ReportSummarizer {
 
     private final AiReportProperties properties;
     private final ObjectMapper objectMapper;
-    private final RestClient restClient;
+    private final LlmClient llm;
 
-    public ReportSummarizer(AiReportProperties properties, ObjectMapper objectMapper, RestClient.Builder builder) {
+    public ReportSummarizer(AiReportProperties properties, ObjectMapper objectMapper, LlmClient llm) {
         this.properties = properties;
         this.objectMapper = objectMapper;
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        Duration timeout = Duration.ofSeconds(properties.timeoutSeconds() > 0 ? properties.timeoutSeconds() : 30);
-        requestFactory.setConnectTimeout(timeout);
-        requestFactory.setReadTimeout(timeout);
-        this.restClient = builder.baseUrl(properties.baseUrl()).requestFactory(requestFactory).build();
+        this.llm = llm;
     }
 
     public Summary summarize(ReassignmentDetailResponse report, SlackNotifyService.Incident incident) {
@@ -62,7 +54,7 @@ public class ReportSummarizer {
             return new Summary(template(report, incident), TEMPLATE_MODEL, "AI_REPORT_API_KEY가 설정되지 않았습니다");
         }
         try {
-            return new Summary(callLlm(report, incident), properties.model(), null);
+            return callLlm(report, incident);
         } catch (Exception e) {
             // 키·응답 본문이 섞일 수 있어 원인은 로그에만 남기고 화면에는 일반 문구만 보내요
             log.warn("슬랙 요약 LLM 호출 실패, 템플릿으로 대체합니다: {}", e.toString());
@@ -71,7 +63,7 @@ public class ReportSummarizer {
         }
     }
 
-    private List<String> callLlm(ReassignmentDetailResponse report, SlackNotifyService.Incident incident) throws Exception {
+    private Summary callLlm(ReassignmentDetailResponse report, SlackNotifyService.Incident incident) throws Exception {
         Map<String, Object> facts = new LinkedHashMap<>();
         if (incident != null) {
             facts.put("equipment", incident.equipmentName() + " (" + report.equipmentId() + ")");
@@ -96,26 +88,8 @@ public class ReportSummarizer {
             facts.put("reportActions", report.ai().actions());
             facts.put("reportRisks", report.ai().risks());
         }
-        Map<String, Object> body = Map.of(
-                "model", properties.model(),
-                "reasoning_effort", geminiEffort(properties.effort()),   // 11/21 Gemini 생각 깊이 (기본 low: 사실 정리라 빠르게, 안 주면 깊게 생각해서 1분 넘게 걸림)
-                "temperature", 0.2,
-                "response_format", Map.of("type", "json_object"),
-                "messages", List.of(
-                        Map.of("role", "system", "content", SYSTEM_PROMPT),
-                        Map.of("role", "user", "content", objectMapper.writeValueAsString(facts))));
-
-        String raw = restClient.post()
-                .uri("/chat/completions")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiKey())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(String.class);
-        String content = objectMapper.readTree(raw).path("choices").path(0).path("message").path("content").asText().trim();
-        // 모델에 따라 JSON을 ```json ... ``` 으로 감싸 보내는 경우가 있어 벗겨 내요 (Gemini 등)
-        String json = content.replaceAll("(?s)^```(?:json)?\\s*(.*?)\\s*```$", "$1");
-        JsonNode lines = objectMapper.readTree(json).path("lines");
+        LlmClient.Reply reply = llm.chat(SYSTEM_PROMPT, objectMapper.writeValueAsString(facts));
+        JsonNode lines = objectMapper.readTree(reply.text()).path("lines");
         List<String> out = new ArrayList<>();
         for (JsonNode n : lines) {
             String s = n.asText("").trim();
@@ -123,7 +97,7 @@ public class ReportSummarizer {
             if (out.size() == MAX_LINES) break;
         }
         if (out.isEmpty()) throw new IllegalStateException("LLM 요약 응답 형식이 올바르지 않습니다");
-        return out;
+        return new Summary(out, reply.model(), null);
     }
 
     /** LLM 없이 숫자만으로 만드는 요약 */
@@ -152,11 +126,5 @@ public class ReportSummarizer {
                     : "재배정하면 오늘 목표를 맞출 수 있습니다.");
         }
         return lines;
-    }
-
-    /** Gemini(OpenAI 호환) reasoning_effort: low · medium · high 만 받아요. 그 밖의 값은 low (11/21) */
-    static String geminiEffort(String effort) {
-        String e = effort == null ? "" : effort.trim().toLowerCase();
-        return e.equals("medium") || e.equals("high") ? e : "low";
     }
 }

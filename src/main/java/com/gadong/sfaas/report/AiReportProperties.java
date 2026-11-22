@@ -24,7 +24,9 @@ public record AiReportProperties(
         @DefaultValue("claude-opus-5-5") String model,
         @DefaultValue("low") String effort,
         @DefaultValue("30") int timeoutSeconds,
-        @DefaultValue({"R", "DC", "I"}) List<String> allocatableStatuses
+        @DefaultValue({"R", "DC", "I"}) List<String> allocatableStatuses,
+        @DefaultValue List<String> fallbackModels,                // 첫 모델이 안 될 때 차례로 부를 모델 (11/22, OpenAI 호환만)
+        @DefaultValue("0") int firstTimeoutSeconds                // 예비 모델이 있을 때 앞 모델을 기다리는 시간 (0 = timeoutSeconds)
 ) {
     boolean anthropic() {
         return provider == null || provider.isBlank() || "anthropic".equalsIgnoreCase(provider.trim());

@@ -60,7 +60,8 @@ public class OrderRequestParser {
         if (text.isEmpty()) return new Parsed(null, null, List.of(), List.of(), null, List.of(), null, "규칙", List.of());
         if (!ai.mockMode()) {
             try {
-                return checkAgainstText(fromJson(objectMapper.readTree(ai.chatJson(SYSTEM_PROMPT, text)), "AI · " + ai.modelName()), rules(text));
+                LlmClient.Reply reply = ai.chat(SYSTEM_PROMPT, text);
+                return checkAgainstText(fromJson(objectMapper.readTree(reply.text()), "AI · " + reply.model()), rules(text));
             } catch (Exception e) {
                 log.warn("추가 주문 요청 AI 해석 실패, 규칙으로 해석합니다: {}", e.getMessage());
                 Parsed r = rules(text);

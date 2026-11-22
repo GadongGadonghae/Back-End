@@ -80,6 +80,13 @@ public class ProductionController {
         return coilStats.today(date);
     }
 
+    @Operation(summary = "M-18 코일 재고 추이",
+            description = "그날 슬리팅 앞 코일 재고(제품 수·롤)의 5분마다 값 + 입고할 때 오른 값. date 생략 시 오늘(지금까지). 마지막 값은 M-16 재고와 같음")
+    @GetMapping("/coil/trend")
+    public List<CoilTrendPoint> coilTrend(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return coilStats.trend(date);
+    }
+
     @Operation(summary = "M-17 공장 안 제품 위치 (3D 물류)",
             description = "입고 뒤·출고 전 제품마다 지금 위치(product_flow 마지막 기록). 설비 안에서 처리 중이면 equipmentId, "
                     + "공정 사이에서 기다리면 pile(SL-PR·PR-WD·WD-PT·PT1:PT-VI·PT2:PT-VI). 프레스 1~3단이 끝내고 들고 있는 제품은 그 프레스 안(equipmentId). 공정 불량(폐기)·출고 제품은 빼요. "

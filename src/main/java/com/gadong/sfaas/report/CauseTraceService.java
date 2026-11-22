@@ -335,9 +335,12 @@ public class CauseTraceService {
     public CauseTrace write(Collected c) {
         List<Sentence> raw = null;
         String fallback = null;
+        String model = null;
         if (!ai.mockMode()) {
             try {
-                raw = llmSentences(c);
+                LlmSentences llm = llmSentences(c);
+                raw = llm.sentences();
+                model = llm.model();
             } catch (Exception e) {
                 log.warn("원인 추적 문장 LLM 실패, 템플릿으로 대체합니다: {}", e.getMessage());
                 fallback = e instanceof AiReportService.LlmUnavailableException ? e.getMessage() : "LLM 응답 형식이 올바르지 않습니다";
@@ -348,17 +351,18 @@ public class CauseTraceService {
         List<Sentence> checked = verify(raw, c.sourceText());
         int ok = (int) checked.stream().filter(Sentence::verified).count();
         return new CauseTrace(Kst.of(c.from()), Kst.of(c.to()), c.evidence(), c.causes(), checked, ok,
-                template ? "mock-template" : ai.modelName(), template, fallback);
+                template ? "mock-template" : model, template, fallback);
     }
 
-    private List<Sentence> llmSentences(Collected c) throws Exception {
+    private LlmSentences llmSentences(Collected c) throws Exception {
         Map<String, Object> facts = new LinkedHashMap<>();
         facts.put("incident", Map.of("equipment", c.incident().equipmentName(), "reason", c.incident().codeName(),
                 "startedAt", HMS.format(c.incident().start())));
         facts.put("evidence", c.evidence().stream().map(e -> Map.of("id", e.id(), "type", e.type(), "title", e.title(), "detail", e.detail())).toList());
         facts.put("causes", c.causes().stream().map(x -> Map.of("id", x.id(), "label", x.label(), "score", x.score(), "grade", x.grade(),
                 "parts", x.parts(), "evidence", x.evidence())).toList());
-        JsonNode root = objectMapper.readTree(ai.chatJson(SYSTEM_PROMPT, objectMapper.writeValueAsString(facts)));
+        LlmClient.Reply reply = ai.chat(SYSTEM_PROMPT, objectMapper.writeValueAsString(facts));
+        JsonNode root = objectMapper.readTree(reply.text());
         List<Sentence> out = new ArrayList<>();
         for (JsonNode n : root.path("sentences")) {
             String t = n.path("text").asText("").trim();
@@ -369,8 +373,11 @@ public class CauseTraceService {
             if (out.size() >= MAX_SENTENCES) break;
         }
         if (out.isEmpty()) throw new IllegalStateException("LLM이 문장을 주지 않았습니다");
-        return out;
+        return new LlmSentences(out, reply.model());
     }
+
+    /** LLM 문장과 실제로 답한 모델 */
+    private record LlmSentences(List<Sentence> sentences, String model) {}
 
     /** 근거로 만든 문장 (시연 모드·LLM 실패) */
     static List<Sentence> templateSentences(Collected c) {

@@ -36,4 +36,11 @@ class SlackNotConfiguredTest {
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("SLACK_NOT_CONFIGURED"));
     }
+
+    /** 라인 담당자·캠퍼스장은 보낼 수 없어요 (11/22) */
+    @Test
+    @WithMockUser(username = "u2", roles = {"LINE_WORKER", "CAMPUS"})
+    void lineWorkerAndCampus_cannotSend() throws Exception {
+        mvc.perform(post("/api/reassignments/1/slack")).andExpect(status().isForbidden());
+    }
 }
