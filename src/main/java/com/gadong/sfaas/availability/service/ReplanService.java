@@ -775,7 +775,7 @@ public class ReplanService {
     /** LLM에 주는 계산 규칙 설명 (보고서 문장의 근거) */
     private String note(String kind, Fault f, LocalDateTime base, long remainingSec, BigDecimal ct) {
         String common = " 기준 시각 " + base.toLocalTime() + ", 근무 끝(" + shiftEnd + ")까지 남은 시간 " + remainingSec / 60 + "분, CT " + ct.stripTrailingZeros().toPlainString()
-                + "초. 실적은 기준 시각까지 출고 양품 수. lineConditions의 availableCapacity = 남은 시간 ÷ CT − 남은 계획(currentPlan). "
+                + "초. 실적은 기준 시각까지 적재 수량. lineConditions의 availableCapacity = 남은 시간 ÷ CT − 남은 계획(currentPlan). "
                 + "수량은 allocation 값을 그대로 쓰고, 계획은 제안만 하며 자동으로 바꾸지 않음.";
         return switch (kind) {
             case "paint" -> f.equipmentName() + "(" + f.equipmentId() + ") 고장. 도장은 공용 설비라 라인 정지가 아니라, 같은 공정의 다른 도장 설비("
